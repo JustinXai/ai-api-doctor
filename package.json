@@ -1,0 +1,25 @@
+{
+  "name": "link-ai-api-manager",
+  "version": "0.1.0",
+  "description": "A lightweight browser extension for managing OpenAI-compatible API keys",
+  "type": "module",
+  "scripts": {
+    "prepare": "node -e \"const fs=require('fs');['dev/entrypoints/popup','dev/public'].forEach(d=>fs.mkdirSync(d,{recursive:true}));['entrypoints','src'].forEach(s=>{const src='./'+s,dist='./dev/'+s;fs.rmSync(dist,{recursive:true,force:true});fs.cpSync(src,dist,{recursive:true})});\"",
+    "dev": "npm run prepare && wxt dev",
+    "build": "wxt build",
+    "build:dev": "npm run prepare && wxt build",
+    "rebuild": "npm run build"
+  },
+  "dependencies": {
+    "@wxt-dev/module-react": "^1.2.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.3.3",
+    "wxt": "^0.20.25"
+  }
+}
