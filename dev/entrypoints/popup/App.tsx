@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Provider, ApiKey } from '../../src/types';
 import {
   getActiveProvider,
   getActiveApiKey,
   maskApiKey,
-  testConnectivity,
 } from '../../src/lib/storage';
 import Header from '../../src/components/Header';
 import StatusCard from '../../src/components/StatusCard';
@@ -16,21 +15,20 @@ import ModelsPage from '../../src/pages/ModelsPage';
 import ExportPage from '../../src/pages/ExportPage';
 import SettingsPage from '../../src/pages/SettingsPage';
 
-const HomePage: React.FC = () => {
+interface HomePageProps {
+  onNavigate: (page: Page) => void;
+  onRefresh: () => void;
+}
+
+const HomePage: React.FC<HomePageProps> = ({ onNavigate, onRefresh }) => {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [apiKey, setApiKey] = useState<ApiKey | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
-      const [activeProvider, activeKey] = await Promise.all([
-        getActiveProvider(),
-        getActiveApiKey((await getActiveProvider())?.id || ''),
-      ]);
+      const activeProvider = await getActiveProvider();
+      const activeKey = await getActiveApiKey(activeProvider?.id || '');
       setProvider(activeProvider);
       setApiKey(activeKey);
     } catch (error) {
@@ -38,7 +36,11 @@ const HomePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (
@@ -55,7 +57,7 @@ const HomePage: React.FC = () => {
         apiKey={apiKey}
         maskedKey={apiKey ? maskApiKey(apiKey.key) : null}
       />
-      <QuickActions onRefresh={loadData} />
+      <QuickActions onRefresh={loadData} onNavigate={onNavigate} />
     </div>
   );
 };
@@ -66,7 +68,7 @@ const App: React.FC = () => {
   const renderPage = () => {
     switch (currentPage) {
       case 'home':
-        return <HomePage />;
+        return <HomePage onNavigate={setCurrentPage} onRefresh={() => {}} />;
       case 'providers':
         return <ProvidersPage />;
       case 'keys':
@@ -78,7 +80,7 @@ const App: React.FC = () => {
       case 'settings':
         return <SettingsPage />;
       default:
-        return <HomePage />;
+        return <HomePage onNavigate={setCurrentPage} onRefresh={() => {}} />;
     }
   };
 

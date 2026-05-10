@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ApiModel } from '../types';
+import { ApiModel, Provider } from '../types';
 import {
   getActiveProvider,
   getActiveApiKey,
   fetchModels,
+  testConnectivity,
 } from '../lib/storage';
 
 const ModelsPage: React.FC = () => {
@@ -11,6 +12,9 @@ const ModelsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [provider, setProvider] = useState<Provider | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; latency?: number; error?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     loadModels();
@@ -19,21 +23,42 @@ const ModelsPage: React.FC = () => {
   const loadModels = async () => {
     setLoading(true);
     setError(null);
+    setTestResult(null);
     try {
-      const provider = await getActiveProvider();
-      const apiKey = await getActiveApiKey(provider?.id || '');
+      const activeProvider = await getActiveProvider();
+      setProvider(activeProvider);
+      const apiKey = await getActiveApiKey(activeProvider?.id || '');
 
-      if (!provider || !apiKey) {
+      if (!activeProvider || !apiKey) {
         setError('Provider or API key not configured. Please set up your provider and API key first.');
         return;
       }
 
-      const fetchedModels = await fetchModels(provider.baseUrl, apiKey.key);
+      const fetchedModels = await fetchModels(activeProvider.baseUrl, apiKey.key);
       setModels(fetchedModels);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch models');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTestConnectivity = async () => {
+    if (!provider) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const apiKey = await getActiveApiKey(provider.id);
+      if (!apiKey) {
+        setTestResult({ success: false, error: 'No API key configured for this provider' });
+        return;
+      }
+      const result = await testConnectivity(provider.baseUrl, apiKey.key);
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ success: false, error: err instanceof Error ? err.message : 'Unknown error' });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -64,11 +89,37 @@ const ModelsPage: React.FC = () => {
 
       {error && (
         <div className="error-message">
-          <span className="error-icon">!</span>
-          {error}
-          <button className="btn btn-secondary retry-btn" onClick={loadModels}>
-            Retry
-          </button>
+          <div className="error-content">
+            <span className="error-icon">!</span>
+            <div className="error-details">
+              <p className="error-text">{error}</p>
+              {provider && (
+                <p className="error-provider">
+                  Provider: <strong>{provider.name}</strong> | Base URL: <code>{provider.baseUrl}</code>
+                </p>
+              )}
+              <p className="error-hint">
+                This provider may not support /v1/models. You can still use it if connectivity test passes.
+              </p>
+            </div>
+          </div>
+          <div className="error-actions">
+            <button className="btn btn-secondary" onClick={handleTestConnectivity} disabled={testing}>
+              {testing ? 'Testing...' : 'Test Connectivity'}
+            </button>
+            <button className="btn btn-primary" onClick={loadModels}>
+              Retry
+            </button>
+          </div>
+          {testResult && (
+            <div className={`connectivity-result ${testResult.success ? 'success' : 'error'}`}>
+              {testResult.success ? (
+                <span>Connectivity OK ({testResult.latency}ms)</span>
+              ) : (
+                <span>Connectivity failed: {testResult.error}</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 

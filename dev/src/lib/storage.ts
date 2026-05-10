@@ -173,15 +173,65 @@ export async function fetchModels(
     },
   });
 
+  const rawText = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+
   if (!response.ok) {
-    throw new Error(`Failed to fetch models: ${response.status}`);
+    throw new Error(`Failed to fetch models: HTTP ${response.status}`);
   }
 
-  const data = await response.json();
-  return (data.data || []).map((model: { id: string; object: string }) => ({
-    id: model.id,
-    name: model.id,
-  }));
+  if (!contentType.includes('application/json')) {
+    const isHtml = rawText.trim().startsWith('<');
+    if (isHtml) {
+      throw new Error(
+        'The server returned an HTML page instead of OpenAI-compatible model JSON. ' +
+        'This provider may not support the /v1/models endpoint.'
+      );
+    }
+    throw new Error(
+      'This provider did not return JSON from /v1/models. It may not support model listing.'
+    );
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(
+      'Failed to parse model response as JSON. This provider may not support model listing.'
+    );
+  }
+
+  // Handle array response (some proxies return arrays directly)
+  if (Array.isArray(data)) {
+    return data.map((item) => {
+      if (typeof item === 'string') {
+        return { id: item, name: item };
+      }
+      return { id: (item as { id: string }).id, name: (item as { id: string }).id };
+    });
+  }
+
+  // Handle standard OpenAI response: { object: "list", data: [...] }
+  if (typeof data === 'object' && data !== null && 'data' in data) {
+    const responseData = data as { data: unknown[] };
+    if (!Array.isArray(responseData.data)) {
+      throw new Error(
+        'Invalid model response format. This provider may not support model listing.'
+      );
+    }
+    return responseData.data.map((model) => {
+      if (typeof model === 'string') {
+        return { id: model, name: model };
+      }
+      const modelObj = model as { id: string };
+      return { id: modelObj.id, name: modelObj.id };
+    });
+  }
+
+  throw new Error(
+    'Invalid model response format. This provider may not support model listing.'
+  );
 }
 
 export async function copyToClipboard(text: string): Promise<void> {

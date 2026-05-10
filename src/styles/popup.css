@@ -662,3 +662,65 @@ body {
 .info-text:last-child {
   margin-bottom: 0;
 }
+
+/* ModelsPage Error Styles */
+.error-content {
+  display: flex;
+  gap: 12px;
+}
+
+.error-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.error-text {
+  font-weight: 500;
+  color: var(--error-color);
+  margin: 0;
+}
+
+.error-provider {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.error-provider code {
+  font-family: monospace;
+  background-color: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.error-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 0;
+}
+
+.error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.connectivity-result {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--border-radius);
+  font-size: 12px;
+}
+
+.connectivity-result.success {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: var(--success-color);
+}
+
+.connectivity-result.error {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--error-color);
+}

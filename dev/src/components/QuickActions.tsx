@@ -9,9 +9,10 @@ import { ConnectivityTestResult } from '../types';
 
 interface QuickActionsProps {
   onRefresh: () => void;
+  onNavigate: (page: 'models' | 'export') => void;
 }
 
-const QuickActions: React.FC<QuickActionsProps> = ({ onRefresh }) => {
+const QuickActions: React.FC<QuickActionsProps> = ({ onRefresh, onNavigate }) => {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectivityTestResult | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -53,11 +54,11 @@ const QuickActions: React.FC<QuickActionsProps> = ({ onRefresh }) => {
   };
 
   const handleViewModels = () => {
-    // Navigation handled by parent
+    onNavigate('models');
   };
 
   const handleExportConfig = () => {
-    // Navigation handled by parent
+    onNavigate('export');
   };
 
   return (
