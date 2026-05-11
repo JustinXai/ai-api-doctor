@@ -5,30 +5,77 @@ interface StatusCardProps {
   provider: Provider | null;
   apiKey: ApiKey | null;
   maskedKey: string | null;
+  activeModelId?: string | null;
+  labels?: {
+    notConfigured: string;
+    provider: string;
+    baseUrl: string;
+    apiKey: string;
+    notSet: string;
+    activeModel: string;
+    noModelSelected: string;
+    builtIn: string;
+  };
 }
 
-const StatusCard: React.FC<StatusCardProps> = ({ provider, apiKey, maskedKey }) => {
+const defaultLabels = {
+  notConfigured: 'Not configured',
+  provider: 'Provider',
+  baseUrl: 'Base URL',
+  apiKey: 'API Key',
+  notSet: 'Not set',
+  activeModel: 'Active Model',
+  noModelSelected: 'No model selected',
+  builtIn: 'Built-in',
+};
+
+const StatusCard: React.FC<StatusCardProps> = ({
+  provider,
+  apiKey,
+  maskedKey,
+  activeModelId,
+  labels = defaultLabels,
+}) => {
   return (
     <div className="status-card">
-      <div className="status-row">
-        <span className="status-label">Provider</span>
-        <span className="status-value">{provider?.name || 'Not configured'}</span>
+      <div className="status-card-head">
+        <div className="status-card-provider">
+          {provider?.name || labels.notConfigured}
+          {provider?.recommended && (
+            <span className="status-badge recommended">{labels.builtIn}</span>
+          )}
+        </div>
       </div>
-      <div className="status-row">
-        <span className="status-label">Base URL</span>
-        <span className="status-value status-url" title={provider?.baseUrl}>
-          {provider?.baseUrl || 'N/A'}
-        </span>
+
+      <div className="status-card-body">
+        <div className="status-field">
+          <span className="status-field-label">{labels.provider}</span>
+          <span className="status-field-value">
+            {provider?.name || <span className="status-field-value muted">{labels.notConfigured}</span>}
+          </span>
+        </div>
+
+        <div className="status-field">
+          <span className="status-field-label">{labels.baseUrl}</span>
+          <span className="status-field-value mono">{provider?.baseUrl || 'N/A'}</span>
+        </div>
+
+        <div className="status-field">
+          <span className="status-field-label">{labels.apiKey}</span>
+          <span className={apiKey && maskedKey ? 'status-field-value key' : 'status-field-value muted'}>
+            {apiKey && maskedKey ? maskedKey : labels.notSet}
+          </span>
+        </div>
+
+        <div className="status-field">
+          <span className="status-field-label">{labels.activeModel}</span>
+          {activeModelId ? (
+            <span className="status-field-value model">{activeModelId}</span>
+          ) : (
+            <span className="status-field-value muted">{labels.noModelSelected}</span>
+          )}
+        </div>
       </div>
-      <div className="status-row">
-        <span className="status-label">API Key</span>
-        <span className="status-value status-key">
-          {apiKey ? maskedKey : 'Not set'}
-        </span>
-      </div>
-      {provider?.recommended && (
-        <div className="status-badge recommended">Recommended</div>
-      )}
     </div>
   );
 };

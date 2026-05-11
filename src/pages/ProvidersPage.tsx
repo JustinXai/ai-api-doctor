@@ -6,8 +6,9 @@ import {
   addProvider,
   deleteProvider,
   setActiveProvider,
+  generateId,
 } from '../lib/storage';
-import { generateId } from '../lib/storage';
+import { Plus, Trash2, CheckCircle } from 'lucide-react';
 
 const ProvidersPage: React.FC = () => {
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -36,18 +37,13 @@ const ProvidersPage: React.FC = () => {
   const handleSetActive = async (id: string) => {
     await setActiveProvider(id);
     setActiveId(id);
-    // Update enabled status
-    const updated = providers.map((p) => ({
-      ...p,
-      enabled: p.id === id,
-    }));
+    const updated = providers.map((p) => ({ ...p, enabled: p.id === id }));
     setProviders(updated);
     await saveProviders(updated);
   };
 
   const handleAddProvider = async () => {
     if (!newProvider.name || !newProvider.baseUrl) return;
-
     const provider: Provider = {
       id: generateId(),
       name: newProvider.name,
@@ -56,7 +52,6 @@ const ProvidersPage: React.FC = () => {
         : `${newProvider.baseUrl}/v1`,
       enabled: false,
     };
-
     await addProvider(provider);
     setProviders([...providers, provider]);
     setNewProvider({ name: '', baseUrl: '' });
@@ -69,52 +64,76 @@ const ProvidersPage: React.FC = () => {
       alert('Cannot delete the recommended provider.');
       return;
     }
+    if (!confirm(`Delete provider "${provider?.name}"?`)) return;
     await deleteProvider(id);
     setProviders(providers.filter((p) => p.id !== id));
   };
 
   if (loading) {
-    return <div className="page-loading"><div className="spinner" /></div>;
+    return (
+      <div className="page-loading">
+        <div className="spinner" />
+        <span className="page-loading-text">Loading…</span>
+      </div>
+    );
   }
 
   return (
-    <div className="page providers-page">
-      <h2 className="page-title">Providers</h2>
+    <div className="page">
+      <div className="page-header">
+        <h2 className="page-title">Providers</h2>
+      </div>
 
       <div className="provider-list">
-        {providers.map((provider) => (
-          <div
-            key={provider.id}
-            className={`provider-item ${activeId === provider.id ? 'active' : ''}`}
-          >
-            <div className="provider-info">
-              <div className="provider-name">
-                {provider.name}
-                {provider.recommended && (
-                  <span className="badge recommended">Recommended</span>
+        {providers.map((provider) => {
+          const isActive = activeId === provider.id;
+          return (
+            <div
+              key={provider.id}
+              className={`list-card ${isActive ? 'active' : ''}`}
+            >
+              <div className="list-card-head">
+                <div className="list-card-name">
+                  {provider.name}
+                  {provider.recommended && isActive && (
+                    <span className="badge recommended active-tag">Recommended</span>
+                  )}
+                  {provider.recommended && !isActive && (
+                    <span className="badge recommended">Recommended</span>
+                  )}
+                  {isActive && !provider.recommended && (
+                    <span className="badge active-tag">Active</span>
+                  )}
+                </div>
+              </div>
+              <div className="list-card-meta">{provider.baseUrl}</div>
+              <div className="list-card-actions">
+                {isActive ? (
+                  <span className="btn-active-label">
+                    <CheckCircle size={11} strokeWidth={2.5} />
+                    Active
+                  </span>
+                ) : (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => handleSetActive(provider.id)}
+                  >
+                    Set Active
+                  </button>
+                )}
+                {!provider.recommended && (
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => handleDeleteProvider(provider.id)}
+                  >
+                    <Trash2 size={11} strokeWidth={2} />
+                    Delete
+                  </button>
                 )}
               </div>
-              <div className="provider-url">{provider.baseUrl}</div>
             </div>
-            <div className="provider-actions">
-              <button
-                className={`btn ${activeId === provider.id ? 'btn-active' : 'btn-primary'}`}
-                onClick={() => handleSetActive(provider.id)}
-                disabled={activeId === provider.id}
-              >
-                {activeId === provider.id ? 'Active' : 'Set Active'}
-              </button>
-              {!provider.recommended && (
-                <button
-                  className="btn btn-danger"
-                  onClick={() => handleDeleteProvider(provider.id)}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {showAddForm ? (
@@ -123,38 +142,29 @@ const ProvidersPage: React.FC = () => {
             type="text"
             placeholder="Provider Name"
             value={newProvider.name}
-            onChange={(e) =>
-              setNewProvider({ ...newProvider, name: e.target.value })
-            }
+            onChange={(e) => setNewProvider({ ...newProvider, name: e.target.value })}
             className="form-input"
           />
           <input
             type="url"
             placeholder="Base URL (e.g., https://api.example.com/v1)"
             value={newProvider.baseUrl}
-            onChange={(e) =>
-              setNewProvider({ ...newProvider, baseUrl: e.target.value })
-            }
+            onChange={(e) => setNewProvider({ ...newProvider, baseUrl: e.target.value })}
             className="form-input"
           />
           <div className="form-actions">
             <button className="btn btn-primary" onClick={handleAddProvider}>
               Add Provider
             </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => setShowAddForm(false)}
-            >
+            <button className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
               Cancel
             </button>
           </div>
         </div>
       ) : (
-        <button
-          className="btn btn-primary add-btn"
-          onClick={() => setShowAddForm(true)}
-        >
-          + Add Custom Provider
+        <button className="btn btn-primary add-btn" onClick={() => setShowAddForm(true)}>
+          <Plus size={13} strokeWidth={2} />
+          Add Custom Provider
         </button>
       )}
     </div>

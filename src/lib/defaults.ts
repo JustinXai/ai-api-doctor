@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   theme: 'system',
   autoConnect: false,
   showKeyPrefix: true,
+  activeModelId: '',
 };
 
 export const STORAGE_QUOTA_WARNING =

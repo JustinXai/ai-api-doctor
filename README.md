@@ -1,12 +1,14 @@
-# AI API Manager by Link-AI
+# AI API Doctor
 
-A lightweight browser extension for managing OpenAI-compatible API keys, Base URLs, model lists, connectivity testing, and client configuration export.
+Local-first diagnostic tool for OpenAI-compatible API keys, Base URLs, model access, usage and client configs.
 
-**Default provider:** Link-AI
-**Custom providers:** supported
-**API keys:** stored locally in browser storage by default
+**Default provider:** Link-AI (built-in, for quick-start)
+**Custom providers:** fully supported
+**API keys:** stored locally in browser storage
 
 ## Brand Notice
+
+Link-AI (link-ai.cc) is the default/built-in provider and a sponsor of this project. All other providers are treated equally. This tool is not affiliated with or endorsed by any relay provider.
 
 Link-AI, link-ai.cc, api1.link-ai.cc and related logos are trademarks of Link-AI and are not licensed for third-party commercial redistribution.
 
@@ -19,7 +21,7 @@ GPL-3.0
 ## Project Structure
 
 ```
-link-ai-api-manager/
+ai-api-doctor/
 ├── entrypoints/                  # WXT entrypoints
 │   └── popup/                    # Popup entrypoint
 │       ├── index.html           # Popup HTML template
@@ -29,11 +31,12 @@ link-ai-api-manager/
 │   ├── components/              # Reusable React components
 │   │   ├── Header.tsx           # App header
 │   │   ├── StatusCard.tsx       # Provider/Key status display
-│   │   ├── QuickActions.tsx      # Quick action buttons
 │   │   └── PageRouter.tsx       # Navigation component
 │   ├── lib/                     # Utility functions
 │   │   ├── storage.ts           # Chrome storage wrapper
-│   │   └── defaults.ts          # Default configuration
+│   │   ├── defaults.ts          # Default configuration
+│   │   ├── diagnosis.ts         # Diagnosis logic
+│   │   └── i18n.ts             # Internationalization
 │   ├── pages/                   # Page components
 │   │   ├── ProvidersPage.tsx    # Provider management
 │   │   ├── KeysPage.tsx         # API Key management
@@ -44,6 +47,9 @@ link-ai-api-manager/
 │   │   └── popup.css            # Popup styles
 │   └── types/                  # TypeScript types
 │       └── index.ts             # Type definitions
+├── _locales/                    # i18n locale files
+│   ├── en/messages.json         # English strings
+│   └── zh_CN/messages.json      # Chinese strings
 ├── wxt.config.ts                # WXT configuration
 ├── tsconfig.json                # TypeScript config
 └── package.json                 # Dependencies
@@ -95,17 +101,16 @@ The production build will be in `.output/chrome-mv3-prod/`.
 
 ## Features
 
-- **Provider Management**: Add, edit, delete API providers
-- **API Key Storage**: Secure local storage with masked display
-- **Connectivity Testing**: Test API connection with latency measurement
-- **Model List**: View available models from your provider
-- **Config Export**: Export configuration for Claude, OpenAI, or generic format
-- **Settings**: Theme, auto-connect, and data management
+- **API Key & Base URL Testing**: Diagnose connectivity and authentication
+- **Model Access Check**: Test model availability with actual chat completion
+- **Usage Audit**: Check whether the response returns usage data and flag anomalies
+- **Provider Management**: Add, edit, delete any OpenAI-compatible provider
+- **Config Export**: Export for Cline, Continue, OpenAI SDK, cURL, or .env format
+- **Bilingual**: Supports English and Simplified Chinese
 
 ## Technical Notes
 
 - Manifest V3 browser extension
 - Uses `chrome.storage.local` for local data persistence
-- No content scripts (v1.0)
 - Minimal permissions: `storage`, `clipboardWrite`
-- Default host permission: `https://api1.link-ai.cc/*`
+- Default host permission: `https://api1.link-ai.cc/*` (for built-in provider)

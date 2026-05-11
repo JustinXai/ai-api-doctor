@@ -1,3 +1,6 @@
+import React from 'react';
+import { Home, Cloud, KeyRound, Boxes, Download, Settings } from 'lucide-react';
+
 export type Page = 'home' | 'providers' | 'keys' | 'models' | 'export' | 'settings';
 
 interface PageRouterProps {
@@ -5,19 +8,19 @@ interface PageRouterProps {
   onNavigate: (page: Page) => void;
 }
 
-const PageRouter: React.FC<PageRouterProps> = ({ currentPage, onNavigate }) => {
-  const navItems: { page: Page; label: string; icon: string }[] = [
-    { page: 'home', label: 'Home', icon: '🏠' },
-    { page: 'providers', label: 'Providers', icon: '☁️' },
-    { page: 'keys', label: 'Keys', icon: '🔑' },
-    { page: 'models', label: 'Models', icon: '🤖' },
-    { page: 'export', label: 'Export', icon: '📤' },
-    { page: 'settings', label: 'Settings', icon: '⚙️' },
-  ];
+const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
+  { page: 'home', label: 'Home', icon: <Home size={20} strokeWidth={1.75} /> },
+  { page: 'providers', label: 'Providers', icon: <Cloud size={20} strokeWidth={1.75} /> },
+  { page: 'keys', label: 'Keys', icon: <KeyRound size={20} strokeWidth={1.75} /> },
+  { page: 'models', label: 'Models', icon: <Boxes size={20} strokeWidth={1.75} /> },
+  { page: 'export', label: 'Export', icon: <Download size={20} strokeWidth={1.75} /> },
+  { page: 'settings', label: 'Settings', icon: <Settings size={20} strokeWidth={1.75} /> },
+];
 
+const PageRouter: React.FC<PageRouterProps> = ({ currentPage, onNavigate }) => {
   return (
     <nav className="page-nav">
-      {navItems.map(({ page, label, icon }) => (
+      {NAV_ITEMS.map(({ page, label, icon }) => (
         <button
           key={page}
           className={`nav-item ${currentPage === page ? 'active' : ''}`}

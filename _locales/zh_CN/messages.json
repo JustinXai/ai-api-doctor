@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "AI API 诊断助手",
+    "description": "Extension name"
+  },
+  "extensionDescription": {
+    "message": "诊断 API Key、Base URL、模型权限、Token 用量，并导出 Cline / Continue 配置。",
+    "description": "Extension description"
+  }
+}
