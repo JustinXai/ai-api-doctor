@@ -120,6 +120,12 @@ export const en = {
   copied: 'Copied!',
   copyFailed: 'Copy failed',
 
+  // Save Image
+  saveImage: 'Save Image',
+  savingImage: 'Saving…',
+  imageSaved: 'Saved',
+  saveImageFailed: 'Save failed',
+
   // Usage audit
   usageAvailable: 'Available',
   usageNotReportedBadge: 'Not reported',
@@ -280,6 +286,12 @@ export const zh: Translations = {
   copyResultText: '复制结果文本',
   copied: '已复制！',
   copyFailed: '复制失败',
+
+  // Save Image
+  saveImage: '保存图片',
+  savingImage: '正在保存…',
+  imageSaved: '已保存',
+  saveImageFailed: '保存失败',
 
   // Usage audit
   usageAvailable: '正常',

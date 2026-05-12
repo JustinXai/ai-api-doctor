@@ -3,7 +3,8 @@
  * Single-page popup with 4 tabs: Home, Models, Export, Help
  */
 
-import React, { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
+import { toPng } from 'html-to-image';
 import {
   Home,
   Boxes,
@@ -67,7 +68,9 @@ function ReportCard({
   onCopyMd,
   onCopyIssue,
   onCopyText,
+  onSaveImage,
   copyState,
+  saveState,
 }: {
   report: DiagnosisReport;
   baseUrl: string;
@@ -75,7 +78,9 @@ function ReportCard({
   onCopyMd: () => void;
   onCopyIssue: () => void;
   onCopyText: () => void;
+  onSaveImage: () => void;
   copyState: 'idle' | 'md' | 'issue' | 'text';
+  saveState: 'idle' | 'saving' | 'saved' | 'failed';
 }) {
   const { t } = useLang();
 
@@ -110,7 +115,7 @@ function ReportCard({
     : null;
 
   return (
-    <div className="report-card">
+    <div className="report-card" ref={reportCardRef}>
       <div className="report-card-head">
         <span className="report-brand">AI API Doctor</span>
         <span className="report-sub">{t('diagnosisResult')}</span>
@@ -185,6 +190,16 @@ function ReportCard({
         <button className={`report-btn ${copyState === 'text' ? 'copied' : ''}`} onClick={onCopyText}>
           {copyState === 'text' ? t('copied') : t('copyResultText')}
         </button>
+        <button
+          className={`report-btn report-btn-save ${saveState === 'saving' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
+          onClick={onSaveImage}
+          disabled={saveState === 'saving'}
+        >
+          {saveState === 'saving' ? t('savingImage') :
+           saveState === 'saved' ? t('imageSaved') :
+           saveState === 'failed' ? t('saveImageFailed') :
+           t('saveImage')}
+        </button>
       </div>
     </div>
   );
@@ -207,8 +222,10 @@ function HomePage() {
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<DiagnosisReport | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'md' | 'issue' | 'text'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [showGuide, setShowGuide] = useState(true);
   const [showExample, setShowExample] = useState(false);
+  const reportCardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getActiveConfig().then((c) => {
@@ -414,6 +431,35 @@ function HomePage() {
     } catch { setCopyState('idle'); }
   }, [report, config, lang]);
 
+  const handleSaveImage = useCallback(async () => {
+    if (!reportCardRef.current) return;
+    setSaveState('saving');
+    try {
+      const dataUrl = await toPng(reportCardRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#0f172a',
+        filter: (node) => {
+          // Exclude the action buttons from the screenshot
+          const el = node as HTMLElement;
+          return !el.classList?.contains('report-actions');
+        },
+      });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `ai-api-doctor-report-${timestamp}.png`;
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = filename;
+      a.click();
+      setSaveState('saved');
+      setTimeout(() => setSaveState('idle'), 2000);
+    } catch (err) {
+      console.error('Save image error:', err);
+      setSaveState('failed');
+      setTimeout(() => setSaveState('idle'), 2000);
+    }
+  }, []);
+
   const canRun = !!config.baseUrl && !!config.apiKey;
 
   return (
@@ -531,7 +577,9 @@ function HomePage() {
           onCopyMd={handleCopyMd}
           onCopyIssue={handleCopyIssue}
           onCopyText={handleCopyText}
+          onSaveImage={handleSaveImage}
           copyState={copyState}
+          saveState={saveState}
         />
       )}
 

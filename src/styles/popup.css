@@ -2202,6 +2202,28 @@ body {
   color: #4ade80;
 }
 
+.report-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.report-btn-save.saving {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.report-btn-save.saved {
+  border-color: #4ade80;
+  background-color: #052e16;
+  color: #4ade80;
+}
+
+.report-btn-save.failed {
+  border-color: #f87171;
+  background-color: #450a0a;
+  color: #f87171;
+}
+
 /* ============================================================
    MVP — Models Page
    ============================================================ */
