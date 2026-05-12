@@ -8,6 +8,7 @@ import {
   setLanguage,
   maskApiKey,
   copyToClipboard,
+  addExampleProvider,
 } from '../../src/lib/storage';
 import { t, resolveLanguage, Language } from '../../src/lib/i18n';
 import { runDiagnosis } from '../../src/lib/diagnosis';
@@ -29,6 +30,9 @@ import {
   Copy,
   CheckCircle2,
   Stethoscope,
+  Plus,
+  ExternalLink,
+  Globe,
 } from 'lucide-react';
 import type { DiagnosisReport, DiagnosisStepResult } from '../../src/types';
 
@@ -197,60 +201,328 @@ function DiagnosisUsageBlock({ report }: { report: DiagnosisReport }) {
   );
 }
 
-// ─── Generate Report Text ────────────────────────────────
+// ─── Generate Markdown Report Text ───────────────────────────
 
-function generateReportText(report: DiagnosisReport, baseUrl: string, lang: 'zh-CN' | 'en-US'): string {
+function generateMarkdownReport(
+  report: DiagnosisReport,
+  baseUrl: string,
+  lang: 'zh-CN' | 'en-US'
+): string {
   const lines: string[] = [];
-  lines.push(lang === 'zh-CN' ? 'AI API 诊断助手报告' : 'AI API Doctor Report');
-  lines.push('\u2500'.repeat(40));
-  lines.push(`${lang === 'zh-CN' ? '服务商' : 'Provider'}: ${report.providerName}`);
-  lines.push(`${lang === 'zh-CN' ? '接口地址' : 'Base URL'}: ${baseUrl}`);
-  lines.push(`${lang === 'zh-CN' ? 'API 密钥' : 'API Key'}: ${report.maskedKey}`);
+  lines.push(`# ${lang === 'zh-CN' ? 'AI API Doctor 诊断报告' : 'AI API Doctor Report'}`);
+  lines.push('');
+
+  const statusLabel = report.overallStatus === 'success'
+    ? (lang === 'zh-CN' ? '可用' : 'Ready')
+    : report.overallStatus === 'warning'
+    ? (lang === 'zh-CN' ? '需要注意' : 'Needs Attention')
+    : (lang === 'zh-CN' ? '失败' : 'Failed');
+
+  lines.push(`**${lang === 'zh-CN' ? '状态' : 'Status'}:** ${statusLabel}`);
+  lines.push(`**${lang === 'zh-CN' ? '已通过' : 'Checks'}:** ${report.passedCount} / ${report.totalCount} ${lang === 'zh-CN' ? '项' : 'passed'}`);
+  lines.push('');
+  lines.push(`| | |`);
+  lines.push(`|---|---|---|`);
+  lines.push(`| **${lang === 'zh-CN' ? '服务商' : 'Provider'}** | ${report.providerName} |`);
+  lines.push(`| **${lang === 'zh-CN' ? '接口地址' : 'Base URL'}** | ${baseUrl} |`);
+  lines.push(`| **${lang === 'zh-CN' ? 'API 密钥' : 'API Key'}** | \`${report.maskedKey}\` |`);
   if (report.activeModelId) {
-    lines.push(`${lang === 'zh-CN' ? '模型' : 'Model'}: ${report.activeModelId}`);
+    lines.push(`| **${lang === 'zh-CN' ? '模型' : 'Model'}** | \`${report.activeModelId}\` |`);
   }
-  lines.push(`${lang === 'zh-CN' ? '时间' : 'Time'}: ${report.startedAt}`);
   lines.push('');
-  lines.push(lang === 'zh-CN' ? '结果：' : 'Result:');
-  lines.push(`  ${report.passedCount} / ${report.totalCount} ${lang === 'zh-CN' ? '项检查通过' : 'checks passed'}`);
 
-  const failedSteps = report.steps.filter((s) => s.status === 'error');
-  if (failedSteps.length > 0) {
-    lines.push('');
-    lines.push(lang === 'zh-CN' ? '失败项目：' : 'Failed Steps:');
-    for (const step of failedSteps) {
-      lines.push(`  - ${step.title}`);
-      if (step.httpStatus) lines.push(`    HTTP Status: ${step.httpStatus}`);
-      if (step.providerMessage) lines.push(`    Provider: ${step.providerMessage}`);
-      if (step.suggestion) lines.push(`    ${lang === 'zh-CN' ? '建议' : 'Suggestion'}: ${step.suggestion.replace(/\n/g, ' ')}`);
+  const firstError = report.steps.find((s) => s.status === 'error');
+  const firstWarning = report.steps.find((s) => s.status === 'warning');
+  const mainIssue = firstError || firstWarning;
+  if (mainIssue) {
+    lines.push(`**${lang === 'zh-CN' ? '主要问题' : 'Main Issue'}:**`);
+    lines.push(`- ${mainIssue.title}`);
+    if (mainIssue.httpStatus) {
+      lines.push(`- **${lang === 'zh-CN' ? 'HTTP 状态码' : 'HTTP Status'}:** ${mainIssue.httpStatus}`);
     }
-  }
-
-  if (report.usageSummary?.hasUsage) {
-    const u = report.usageSummary;
+    if (mainIssue.providerMessage) {
+      lines.push(`- **${lang === 'zh-CN' ? '服务商返回' : 'Provider Message'}:** ${mainIssue.providerMessage}`);
+    }
+    if (mainIssue.suggestion) {
+      lines.push(`- **${lang === 'zh-CN' ? '建议' : 'Suggestion'}:** ${mainIssue.suggestion.replace(/\n/g, ' ')}`);
+    }
     lines.push('');
-    lines.push(lang === 'zh-CN' ? '用量：' : 'Usage:');
-    if (u.promptTokens !== undefined) lines.push(`  prompt_tokens: ${u.promptTokens}`);
-    if (u.completionTokens !== undefined) lines.push(`  completion_tokens: ${u.completionTokens}`);
-    if (u.totalTokens !== undefined) lines.push(`  total_tokens: ${u.totalTokens}`);
-    if (report.totalLatencyMs) lines.push(`  latency: ${report.totalLatencyMs}ms`);
   }
 
-  lines.push('');
-  lines.push('\u2500'.repeat(40));
-  if (lang === 'zh-CN') {
-    lines.push('说明：');
-    lines.push('本报告仅展示配置和用量数据，无法证明服务商存在故意多扣费行为。');
-  } else {
-    lines.push('Important:');
-    lines.push('This report masks the API Key and does not prove intentional overbilling.');
-    lines.push('It only shows configuration and usage signals from this test request.');
+  if (report.usageSummary) {
+    lines.push(`**${lang === 'zh-CN' ? '用量' : 'Usage'}:**`);
+    if (report.usageSummary.status === 'available' || report.usageSummary.status === 'anomaly') {
+      if (report.usageSummary.totalTokens !== undefined) {
+        lines.push(`- \`total_tokens: ${report.usageSummary.totalTokens}\``);
+      }
+      if (report.usageSummary.promptTokens !== undefined) {
+        lines.push(`- \`prompt_tokens: ${report.usageSummary.promptTokens}\``);
+      }
+      if (report.usageSummary.completionTokens !== undefined) {
+        lines.push(`- \`completion_tokens: ${report.usageSummary.completionTokens}\``);
+      }
+    } else if (report.usageSummary.status === 'missing') {
+      lines.push(`- ${lang === 'zh-CN' ? '未返回用量数据' : 'No usage data returned.'}`);
+    } else {
+      lines.push(`- ${lang === 'zh-CN' ? '未测试用量' : 'Usage not tested.'}`);
+    }
+    lines.push('');
   }
+
+  lines.push(`---`);
+  lines.push(`*${lang === 'zh-CN' ? 'API Key 已脱敏，不包含完整 Key。' : 'API Key is masked. No full key is included.'}*`);
+  lines.push(`*Generated by AI API Doctor · aiapidoctor.com*`);
 
   return lines.join('\n');
 }
 
+// ─── Generate GitHub Issue Text ──────────────────────────────
+
+function generateGhIssueReport(
+  report: DiagnosisReport,
+  baseUrl: string,
+  lang: 'zh-CN' | 'en-US'
+): string {
+  const lines: string[] = [];
+
+  if (lang === 'zh-CN') {
+    lines.push('## API 诊断问题');
+    lines.push('');
+    lines.push('### 摘要');
+    lines.push('AI API Doctor 发现了配置、权限或用量返回问题。');
+    lines.push('');
+    lines.push('### 环境');
+    lines.push(`- 服务商：${report.providerName}`);
+    lines.push(`- Base URL：${baseUrl}`);
+    if (report.activeModelId) lines.push(`- 模型：${report.activeModelId}`);
+    lines.push(`- 时间：${new Date(report.startedAt).toLocaleString('zh-CN')}`);
+    lines.push('');
+    lines.push('### 结果');
+    const statusLabel = report.overallStatus === 'success' ? '可用' : report.overallStatus === 'warning' ? '需要注意' : '失败';
+    lines.push(`- 状态：${statusLabel}`);
+    lines.push(`- 通过项：${report.passedCount} / ${report.totalCount}`);
+    lines.push('');
+
+    const firstError = report.steps.find((s) => s.status === 'error');
+    const firstWarning = report.steps.find((s) => s.status === 'warning');
+    const mainIssue = firstError || firstWarning;
+    if (mainIssue) {
+      lines.push('### 失败步骤');
+      lines.push(`- 步骤：${mainIssue.title}`);
+      if (mainIssue.httpStatus) lines.push(`- HTTP 状态码：${mainIssue.httpStatus}`);
+      if (mainIssue.providerMessage) lines.push(`- 服务商返回信息：${mainIssue.providerMessage}`);
+      if (mainIssue.suggestion) lines.push(`- 建议：${mainIssue.suggestion.replace(/\n/g, ' ')}`);
+      lines.push('');
+    }
+
+    if (report.usageSummary) {
+      lines.push('### 用量');
+      if (report.usageSummary.status === 'available' || report.usageSummary.status === 'anomaly') {
+        if (report.usageSummary.promptTokens !== undefined) lines.push(`- prompt_tokens：${report.usageSummary.promptTokens}`);
+        if (report.usageSummary.completionTokens !== undefined) lines.push(`- completion_tokens：${report.usageSummary.completionTokens}`);
+        if (report.usageSummary.totalTokens !== undefined) lines.push(`- total_tokens：${report.usageSummary.totalTokens}`);
+        lines.push(`- 用量状态：${report.usageSummary.suspicious ? '数据异常' : '正常'}`);
+      } else if (report.usageSummary.status === 'missing') {
+        lines.push('- 用量状态：未返回数据');
+      } else {
+        lines.push('- 用量状态：未测试');
+      }
+      lines.push('');
+    }
+
+    lines.push('### 安全说明');
+    lines.push('API Key 已脱敏，不包含完整 Key。');
+  } else {
+    lines.push('## API Diagnosis Issue');
+    lines.push('');
+    lines.push('### Summary');
+    lines.push('AI API Doctor found a configuration or permission issue.');
+    lines.push('');
+    lines.push('### Environment');
+    lines.push(`- Provider: ${report.providerName}`);
+    lines.push(`- Base URL: ${baseUrl}`);
+    if (report.activeModelId) lines.push(`- Model: ${report.activeModelId}`);
+    lines.push(`- Time: ${new Date(report.startedAt).toLocaleString('en-US')}`);
+    lines.push('');
+    lines.push('### Result');
+    const statusLabel = report.overallStatus === 'success' ? 'Ready' : report.overallStatus === 'warning' ? 'Needs Attention' : 'Failed';
+    lines.push(`- Status: ${statusLabel}`);
+    lines.push(`- Checks: ${report.passedCount} / ${report.totalCount} passed`);
+    lines.push('');
+
+    const firstError = report.steps.find((s) => s.status === 'error');
+    const firstWarning = report.steps.find((s) => s.status === 'warning');
+    const mainIssue = firstError || firstWarning;
+    if (mainIssue) {
+      lines.push('### Failed Step');
+      lines.push(`- Step: ${mainIssue.title}`);
+      if (mainIssue.httpStatus) lines.push(`- HTTP Status: ${mainIssue.httpStatus}`);
+      if (mainIssue.providerMessage) lines.push(`- Provider Message: ${mainIssue.providerMessage}`);
+      if (mainIssue.suggestion) lines.push(`- Suggestion: ${mainIssue.suggestion.replace(/\n/g, ' ')}`);
+      lines.push('');
+    }
+
+    if (report.usageSummary) {
+      lines.push('### Usage');
+      if (report.usageSummary.status === 'available' || report.usageSummary.status === 'anomaly') {
+        if (report.usageSummary.promptTokens !== undefined) lines.push(`- prompt_tokens: ${report.usageSummary.promptTokens}`);
+        if (report.usageSummary.completionTokens !== undefined) lines.push(`- completion_tokens: ${report.usageSummary.completionTokens}`);
+        if (report.usageSummary.totalTokens !== undefined) lines.push(`- total_tokens: ${report.usageSummary.totalTokens}`);
+        lines.push(`- usage_status: ${report.usageSummary.suspicious ? 'Anomaly' : 'Normal'}`);
+      } else if (report.usageSummary.status === 'missing') {
+        lines.push('- usage_status: No data returned');
+      } else {
+        lines.push('- usage_status: Not tested');
+      }
+      lines.push('');
+    }
+
+    lines.push('### Safety');
+    lines.push('The API Key is masked. No full key is included.');
+  }
+
+  lines.push('');
+  lines.push(`*Generated by AI API Doctor · aiapidoctor.com*`);
+  return lines.join('\n');
+}
+
+// ─── Shareable Result Card ─────────────────────────────────
+
+function ShareableCard({
+  report,
+  provider,
+  lang,
+  onCopyMd,
+  onCopyGh,
+  copyState,
+}: {
+  report: DiagnosisReport;
+  provider: Provider | null;
+  lang: 'zh-CN' | 'en-US';
+  onCopyMd: () => void;
+  onCopyGh: () => void;
+  copyState: 'idle' | 'md' | 'gh';
+}) {
+  const { t } = useLanguage();
+  const statusLabel = report.overallStatus === 'success'
+    ? (lang === 'zh-CN' ? '可用' : 'Ready')
+    : report.overallStatus === 'warning'
+    ? (lang === 'zh-CN' ? '需要处理' : 'Needs Attention')
+    : (lang === 'zh-CN' ? '失败' : 'Failed');
+  const statusClass = report.overallStatus === 'success' ? 'card-status-ok' : report.overallStatus === 'warning' ? 'card-status-warn' : 'card-status-fail';
+
+  const firstError = report.steps.find((s) => s.status === 'error');
+  const firstWarning = report.steps.find((s) => s.status === 'warning');
+  const mainIssue = firstError || firstWarning;
+  const mainIssueTitle = mainIssue?.title || (lang === 'zh-CN' ? '未发现主要问题' : 'No major issue found');
+
+  const usageLines: string[] = [];
+  if (report.usageSummary?.status === 'available' || report.usageSummary?.status === 'anomaly') {
+    const u = report.usageSummary;
+    if (u.totalTokens !== undefined) usageLines.push(`total: ${u.totalTokens}`);
+    if (u.promptTokens !== undefined) usageLines.push(`prompt: ${u.promptTokens}`);
+    if (u.completionTokens !== undefined) usageLines.push(`completion: ${u.completionTokens}`);
+  } else if (report.usageSummary?.status === 'missing') {
+    usageLines.push(lang === 'zh-CN' ? '未返回用量' : 'Not reported');
+  } else {
+    usageLines.push(lang === 'zh-CN' ? '未测试用量' : 'Not tested');
+  }
+
+  return (
+    <div className="shareable-card">
+      <div className="shareable-card-head">
+        <span className="shareable-brand">AI API Doctor</span>
+        <span className="shareable-subbrand">Diagnosis Result / 诊断结果</span>
+      </div>
+      <div className="shareable-card-body">
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardStatus')}</span>
+          <span className={`shareable-value ${statusClass}`}>{statusLabel}</span>
+        </div>
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardChecks')}</span>
+          <span className="shareable-value">
+            {report.passedCount} / {report.totalCount} {lang === 'zh-CN' ? '通过' : 'passed'}
+          </span>
+        </div>
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardProvider')}</span>
+          <span className="shareable-value">{report.providerName}</span>
+        </div>
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardBaseUrl')}</span>
+          <span className="shareable-value shareable-mono">{provider?.baseUrl || 'N/A'}</span>
+        </div>
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardModel')}</span>
+          <span className="shareable-value shareable-mono">
+            {report.activeModelId || (lang === 'zh-CN' ? '未选择' : 'Not selected')}
+          </span>
+        </div>
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardMainIssue')}</span>
+          <span className="shareable-value">{mainIssueTitle}</span>
+        </div>
+        {mainIssue?.httpStatus && (
+          <div className="shareable-row">
+            <span className="shareable-label">{t('cardHttpStatus')}</span>
+            <span className="shareable-value shareable-mono">{mainIssue.httpStatus}</span>
+          </div>
+        )}
+        {mainIssue?.providerMessage && (
+          <div className="shareable-row">
+            <span className="shareable-label">{t('cardProviderMsg')}</span>
+            <span className="shareable-value">{mainIssue.providerMessage}</span>
+          </div>
+        )}
+        {mainIssue?.suggestion && (
+          <div className="shareable-row">
+            <span className="shareable-label">{t('cardSuggestion')}</span>
+            <span className="shareable-value">{mainIssue.suggestion.replace(/\n/g, ' ')}</span>
+          </div>
+        )}
+        <div className="shareable-row">
+          <span className="shareable-label">{t('cardUsage')}</span>
+          <span className="shareable-value shareable-mono">{usageLines.join(' / ')}</span>
+        </div>
+      </div>
+      <div className="shareable-card-foot">
+        <span className="shareable-footer">{t('cardFooter')}</span>
+        <span className="shareable-url">{t('cardUrl')}</span>
+      </div>
+      <div className="shareable-actions">
+        <button
+          className={`shareable-btn ${copyState === 'md' ? 'copied' : ''}`}
+          onClick={onCopyMd}
+        >
+          {copyState === 'md' ? t('copied') : t('copyMarkdown')}
+        </button>
+        <button
+          className={`shareable-btn ${copyState === 'gh' ? 'copied' : ''}`}
+          onClick={onCopyGh}
+        >
+          {copyState === 'gh' ? t('copied') : t('copyGhIssue')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Home Page ──────────────────────────────────────────
+
+function shouldShowExamplePrompt(report: DiagnosisReport | null, hasProvider: boolean, hasKey: boolean): boolean {
+  if (hasProvider && hasKey && report) {
+    const firstError = report.steps.find((s) => s.status === 'error');
+    if (firstError) {
+      const code = firstError.errorType;
+      return !!(code === 'NETWORK_ERROR' || code === 'NON_JSON_RESPONSE' ||
+        code === 'HTTP_404' || code === 'HTML_RESPONSE' || code === 'CLOUDFLARE_BLOCK' ||
+        code === 'LOGIN_PAGE' || code === 'HOST_UNREACHABLE' || code === 'SSL_ERROR' ||
+        code === 'CORS_ERROR');
+    }
+  }
+  return !hasProvider || !hasKey;
+}
 
 interface HomePageProps {
   onNavigate: (page: Page) => void;
@@ -264,12 +536,13 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<DiagnosisReport | null>(null);
-  const [reportCopied, setReportCopied] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'md' | 'gh'>('idle');
+  const [exampleAdded, setExampleAdded] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
       const activeProvider = await getActiveProvider();
-      const activeKey = await getActiveApiKey(activeProvider?.id || '');
+      const activeKey = activeProvider ? await getActiveApiKey(activeProvider.id) : null;
       setProvider(activeProvider);
       setApiKey(activeKey);
     } catch (error) {
@@ -297,13 +570,34 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
     }
   }, [provider, apiKey, activeModelId]);
 
-  const handleCopyReport = useCallback(async () => {
+  const handleCopyMarkdown = useCallback(async () => {
     if (!report || !provider) return;
-    const text = generateReportText(report, provider.baseUrl, lang);
-    await copyToClipboard(text);
-    setReportCopied(true);
-    setTimeout(() => setReportCopied(false), 2000);
+    try {
+      const text = generateMarkdownReport(report, provider.baseUrl, lang);
+      await copyToClipboard(text);
+      setCopyState('md');
+      setTimeout(() => setCopyState('idle'), 2000);
+    } catch { /* ignore */ }
   }, [report, provider, lang]);
+
+  const handleCopyGhIssue = useCallback(async () => {
+    if (!report || !provider) return;
+    try {
+      const text = generateGhIssueReport(report, provider.baseUrl, lang);
+      await copyToClipboard(text);
+      setCopyState('gh');
+      setTimeout(() => setCopyState('idle'), 2000);
+    } catch { /* ignore */ }
+  }, [report, provider, lang]);
+
+  const handleAddExample = useCallback(async () => {
+    await addExampleProvider();
+    setExampleAdded(true);
+  }, []);
+
+  const hasProvider = !!provider;
+  const hasKey = !!apiKey;
+  const showExamplePrompt = shouldShowExamplePrompt(report, hasProvider, hasKey) && !exampleAdded;
 
   const getOverallStatusLabel = () => {
     switch (report?.overallStatus) {
@@ -324,6 +618,47 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
     );
   }
 
+  // ── No Provider at all ──────────────────────────────
+  if (!hasProvider) {
+    return (
+      <div className="home-page">
+        <div className="empty-state">
+          <div className="empty-state-icon">
+            <Globe size={18} strokeWidth={1.5} />
+          </div>
+          <span className="empty-state-title">{t('emptyNoProvider')}</span>
+          <span className="empty-state-hint">{t('emptyNoProviderHint')}</span>
+          <div className="empty-state-actions">
+            <button className="btn btn-primary" onClick={() => onNavigate('providers')}>
+              <Plus size={11} strokeWidth={2} />
+              {t('addProvider')}
+            </button>
+            <button className="btn btn-secondary" onClick={() => onNavigate('settings')}>
+              <ExternalLink size={11} strokeWidth={2} />
+              {t('viewGuide')}
+            </button>
+          </div>
+        </div>
+
+        {showExamplePrompt && (
+          <div className="example-prompt">
+            <div className="example-prompt-head">
+              <span className="example-prompt-title">{t('needRefEnv')}</span>
+            </div>
+            <div className="example-prompt-body">
+              <p className="example-prompt-desc">{t('needRefEnvHint')}</p>
+              <button className="example-prompt-btn" onClick={handleAddExample}>
+                <Plus size={11} strokeWidth={2} />
+                {t('addExampleProvider')}
+              </button>
+              <p className="example-prompt-footnote">{t('exampleProviderBy')}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="home-page">
       <StatusCard
@@ -339,7 +674,7 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
           notSet: t('notSet'),
           activeModel: t('activeModel'),
           noModelSelected: t('noModelSelected'),
-          builtIn: t('builtIn'),
+          exampleTag: t('exampleTag'),
         }}
       />
 
@@ -362,7 +697,24 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
         )}
       </button>
 
-      {/* Diagnosis Summary */}
+      {/* Example Provider Prompt */}
+      {showExamplePrompt && (
+        <div className="example-prompt">
+          <div className="example-prompt-head">
+            <span className="example-prompt-title">{t('needRefEnv')}</span>
+          </div>
+          <div className="example-prompt-body">
+            <p className="example-prompt-desc">{t('needRefEnvHint')}</p>
+            <button className="example-prompt-btn" onClick={handleAddExample}>
+              <Plus size={11} strokeWidth={2} />
+              {t('addExampleProvider')}
+            </button>
+            <p className="example-prompt-footnote">{t('exampleProviderBy')}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Diagnosis Summary + Steps */}
       {report ? (
         <>
           <div className="diag-summary">
@@ -383,6 +735,16 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
             </span>
           </div>
 
+          {/* Shareable Result Card */}
+          <ShareableCard
+            report={report}
+            provider={provider}
+            lang={lang}
+            onCopyMd={handleCopyMarkdown}
+            onCopyGh={handleCopyGhIssue}
+            copyState={copyState}
+          />
+
           {/* Steps + Usage in scrollable area */}
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', minHeight: 0 }}>
             <div className="diag-steps">
@@ -391,24 +753,6 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate, activeModelId }) => {
               ))}
             </div>
             <DiagnosisUsageBlock report={report} />
-
-            {/* Copy Report */}
-            <button
-              className={`copy-report-btn ${reportCopied ? 'copied' : ''}`}
-              onClick={handleCopyReport}
-            >
-              {reportCopied ? (
-                <>
-                  <CheckCircle2 size={12} strokeWidth={2} />
-                  {t('copied')}
-                </>
-              ) : (
-                <>
-                  <Copy size={12} strokeWidth={2} />
-                  {t('copyReport')}
-                </>
-              )}
-            </button>
           </div>
         </>
       ) : (

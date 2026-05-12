@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "AI API Doctor",
+    "description": "Extension name"
+  },
+  "extensionDescription": {
+    "message": "Diagnose OpenAI-compatible API keys, Base URLs, model access, usage and client configs.",
+    "description": "Extension description"
+  }
+}

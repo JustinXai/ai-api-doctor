@@ -2,7 +2,8 @@ export interface Provider {
   id: string;
   name: string;
   baseUrl: string;
-  recommended?: boolean;
+  /** 'custom' = user-added, 'example' = pre-loaded demo provider */
+  source?: 'custom' | 'example';
   enabled?: boolean;
 }
 

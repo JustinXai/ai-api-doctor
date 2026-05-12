@@ -14,7 +14,7 @@ interface StatusCardProps {
     notSet: string;
     activeModel: string;
     noModelSelected: string;
-    builtIn: string;
+    exampleTag: string;
   };
 }
 
@@ -26,7 +26,7 @@ const defaultLabels = {
   notSet: 'Not set',
   activeModel: 'Active Model',
   noModelSelected: 'No model selected',
-  builtIn: 'Built-in',
+  exampleTag: 'Example',
 };
 
 const StatusCard: React.FC<StatusCardProps> = ({
@@ -41,8 +41,8 @@ const StatusCard: React.FC<StatusCardProps> = ({
       <div className="status-card-head">
         <div className="status-card-provider">
           {provider?.name || labels.notConfigured}
-          {provider?.recommended && (
-            <span className="status-badge recommended">{labels.builtIn}</span>
+          {provider?.source === 'example' && (
+            <span className="status-badge example-tag">{labels.exampleTag}</span>
           )}
         </div>
       </div>

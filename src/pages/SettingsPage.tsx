@@ -144,6 +144,30 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
       </div>
 
+      {/* About Section */}
+      <div className="settings-section">
+        <div className="section-label" style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>
+          {lang === 'zh-CN' ? '关于' : 'About'}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>
+            {lang === 'zh-CN'
+              ? 'AI API Doctor 由 @norike0718 发起并公开构建。'
+              : 'AI API Doctor is publicly built by @norike0718.'}
+          </p>
+          <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>
+            {lang === 'zh-CN'
+              ? '作者长期构建 SaaS 和 AI 工具，关注内容工作流、AI API 配置、自动化生产线和开发者工具体验。'
+              : 'The author builds SaaS and AI tools, with a focus on content workflows, AI API configuration, automation pipelines and developer tool experience.'}
+          </p>
+          <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>
+            {lang === 'zh-CN'
+              ? 'Link-AI 是项目赞助方和示例服务商之一。AI API Doctor 支持任何 OpenAI-compatible API，诊断逻辑不会因服务商不同而改变。'
+              : 'Link-AI is a sponsor and one of the example providers. AI API Doctor supports any OpenAI-compatible API, and the same diagnostic logic applies to every provider.'}
+          </p>
+        </div>
+      </div>
+
       {/* Help & FAQ */}
       <div className="settings-section">
         <div className="section-label" style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>

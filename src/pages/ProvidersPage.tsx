@@ -4,11 +4,12 @@ import {
   getProviders,
   saveProviders,
   addProvider,
+  addExampleProvider,
   deleteProvider,
   setActiveProvider,
   generateId,
 } from '../lib/storage';
-import { Plus, Trash2, CheckCircle } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, Lightbulb } from 'lucide-react';
 
 const ProvidersPage: React.FC = () => {
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -58,12 +59,15 @@ const ProvidersPage: React.FC = () => {
     setShowAddForm(false);
   };
 
+  const handleAddExample = async () => {
+    const p = await addExampleProvider();
+    await loadProviders();
+    await setActiveProvider(p.id);
+    setActiveId(p.id);
+  };
+
   const handleDeleteProvider = async (id: string) => {
     const provider = providers.find((p) => p.id === id);
-    if (provider?.recommended) {
-      alert('Cannot delete the recommended provider.');
-      return;
-    }
     if (!confirm(`Delete provider "${provider?.name}"?`)) return;
     await deleteProvider(id);
     setProviders(providers.filter((p) => p.id !== id));
@@ -95,13 +99,10 @@ const ProvidersPage: React.FC = () => {
               <div className="list-card-head">
                 <div className="list-card-name">
                   {provider.name}
-                  {provider.recommended && isActive && (
-                    <span className="badge recommended active-tag">Recommended</span>
+                  {provider.source === 'example' && (
+                    <span className="badge example-tag-badge">Example</span>
                   )}
-                  {provider.recommended && !isActive && (
-                    <span className="badge recommended">Recommended</span>
-                  )}
-                  {isActive && !provider.recommended && (
+                  {isActive && (
                     <span className="badge active-tag">Active</span>
                   )}
                 </div>
@@ -121,15 +122,13 @@ const ProvidersPage: React.FC = () => {
                     Set Active
                   </button>
                 )}
-                {!provider.recommended && (
-                  <button
-                    className="btn btn-danger"
-                    onClick={() => handleDeleteProvider(provider.id)}
-                  >
-                    <Trash2 size={11} strokeWidth={2} />
-                    Delete
-                  </button>
-                )}
+                <button
+                  className="btn btn-danger"
+                  onClick={() => handleDeleteProvider(provider.id)}
+                >
+                  <Trash2 size={11} strokeWidth={2} />
+                  Delete
+                </button>
               </div>
             </div>
           );
@@ -162,10 +161,16 @@ const ProvidersPage: React.FC = () => {
           </div>
         </div>
       ) : (
-        <button className="btn btn-primary add-btn" onClick={() => setShowAddForm(true)}>
-          <Plus size={13} strokeWidth={2} />
-          Add Custom Provider
-        </button>
+        <div className="provider-add-btns">
+          <button className="btn btn-primary add-btn" onClick={() => setShowAddForm(true)}>
+            <Plus size={13} strokeWidth={2} />
+            Add Custom Provider
+          </button>
+          <button className="btn btn-ghost" onClick={handleAddExample}>
+            <Lightbulb size={11} strokeWidth={2} />
+            Add Example Provider
+          </button>
+        </div>
       )}
     </div>
   );

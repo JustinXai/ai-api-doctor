@@ -4,7 +4,7 @@
   "description": "Diagnose OpenAI-compatible API keys, Base URLs, model access, usage and client configs.",
   "type": "module",
   "scripts": {
-    "prepare": "node -e \"const fs=require('fs');['dev/entrypoints/popup','dev/public'].forEach(d=>fs.mkdirSync(d,{recursive:true}));['entrypoints','src'].forEach(s=>{const src='./'+s,dist='./dev/'+s;fs.rmSync(dist,{recursive:true,force:true});fs.cpSync(src,dist,{recursive:true})});\"",
+    "prepare": "node -e \"const fs=require('fs');['dev/entrypoints/popup','dev/public/_locales/en','dev/public/_locales/zh_CN'].forEach(d=>fs.mkdirSync(d,{recursive:true}));fs.cpSync('./entrypoints','./dev/entrypoints',{recursive:true,filter:(src)=>!src.includes('node_modules')});fs.cpSync('./src','./dev/src',{recursive:true,filter:(src)=>!src.includes('node_modules')});fs.cpSync('./public','./dev/public',{recursive:true});\"",
     "dev": "npm run prepare && wxt dev",
     "build": "wxt build",
     "build:dev": "npm run prepare && wxt build",

@@ -6,7 +6,7 @@ import {
   ApiError,
   ApiErrorCode,
 } from '../types';
-import { DEFAULT_PROVIDER, DEFAULT_SETTINGS } from './defaults';
+import { DEFAULT_SETTINGS, EXAMPLE_PROVIDER } from './defaults';
 
 const STORAGE_KEYS = {
   PROVIDERS: 'providers',
@@ -33,11 +33,7 @@ async function setToStorage<T>(key: StorageKey, value: T): Promise<void> {
 
 export async function getProviders(): Promise<Provider[]> {
   const providers = await getFromStorage<Provider[]>(STORAGE_KEYS.PROVIDERS);
-  if (!providers || providers.length === 0) {
-    await saveProviders([DEFAULT_PROVIDER]);
-    return [DEFAULT_PROVIDER];
-  }
-  return providers;
+  return providers || [];
 }
 
 export async function saveProviders(providers: Provider[]): Promise<void> {
@@ -48,6 +44,15 @@ export async function addProvider(provider: Provider): Promise<void> {
   const providers = await getProviders();
   providers.push(provider);
   await saveProviders(providers);
+}
+
+export async function addExampleProvider(): Promise<Provider> {
+  const providers = await getProviders();
+  // Only add if not already present
+  const existing = providers.find((p) => p.id === EXAMPLE_PROVIDER.id);
+  if (existing) return existing;
+  await saveProviders([...providers, EXAMPLE_PROVIDER]);
+  return EXAMPLE_PROVIDER;
 }
 
 export async function updateProvider(
@@ -91,11 +96,9 @@ export async function deleteApiKey(id: string): Promise<void> {
 
 export async function getActiveProvider(): Promise<Provider | null> {
   const activeId = await getFromStorage<string>(STORAGE_KEYS.ACTIVE_PROVIDER);
-  if (!activeId) {
-    return DEFAULT_PROVIDER;
-  }
+  if (!activeId) return null;
   const providers = await getProviders();
-  return providers.find((p) => p.id === activeId) || DEFAULT_PROVIDER;
+  return providers.find((p) => p.id === activeId) || null;
 }
 
 export async function setActiveProvider(id: string): Promise<void> {

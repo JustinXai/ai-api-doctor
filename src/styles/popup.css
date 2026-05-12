@@ -1613,3 +1613,232 @@ body {
   color: var(--muted);
   font-weight: 600;
 }
+
+/* ── Example Provider Prompt ──────────────────────────── */
+.example-prompt {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.example-prompt-head {
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--panel-2);
+}
+
+.example-prompt-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.example-prompt-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.example-prompt-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.example-prompt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background-color: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+  font-family: inherit;
+  align-self: flex-start;
+}
+
+.example-prompt-btn:hover {
+  border-color: var(--border-strong);
+  background-color: var(--panel-2);
+  color: var(--text);
+}
+
+.example-prompt-footnote {
+  font-size: 10px;
+  color: var(--muted-light);
+  line-height: 1.4;
+}
+
+/* ── Shareable Result Card ────────────────────────────── */
+.shareable-card {
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.shareable-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1e293b;
+  background-color: #1e293b;
+}
+
+.shareable-brand {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: -0.01em;
+}
+
+.shareable-subbrand {
+  font-size: 10px;
+  color: #64748b;
+  font-family: var(--font-mono);
+}
+
+.shareable-card-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.shareable-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.shareable-label {
+  font-size: 10px;
+  color: #64748b;
+  width: 68px;
+  flex-shrink: 0;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.shareable-value {
+  font-size: 11px;
+  color: #e2e8f0;
+  flex: 1;
+  word-break: break-all;
+}
+
+.shareable-value.shareable-mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.shareable-value.card-status-ok { color: #4ade80; }
+.shareable-value.card-status-warn { color: #fbbf24; }
+.shareable-value.card-status-fail { color: #f87171; }
+
+.shareable-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-top: 1px solid #1e293b;
+  background-color: #0f172a;
+}
+
+.shareable-footer {
+  font-size: 10px;
+  color: #475569;
+}
+
+.shareable-url {
+  font-size: 10px;
+  color: #475569;
+  font-family: var(--font-mono);
+}
+
+.shareable-actions {
+  display: flex;
+  gap: 5px;
+  padding: 8px 12px;
+  border-top: 1px solid #1e293b;
+  background-color: #0f172a;
+}
+
+.shareable-btn {
+  flex: 1;
+  height: 30px;
+  border: 1px solid #334155;
+  border-radius: var(--radius-md);
+  background-color: #1e293b;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-family: inherit;
+  letter-spacing: 0.01em;
+}
+
+.shareable-btn:hover {
+  border-color: #475569;
+  background-color: #273549;
+  color: #e2e8f0;
+}
+
+.shareable-btn.copied {
+  border-color: #4ade80;
+  background-color: #052e16;
+  color: #4ade80;
+}
+
+/* ── Empty State Enhancements ─────────────────────────── */
+.empty-state-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.empty-state-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+/* ── Provider Add Buttons ──────────────────────────────── */
+.provider-add-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Badge variants ──────────────────────────────────── */
+.badge.example-tag-badge {
+  background-color: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
+}
+
+.status-badge.example-tag {
+  background-color: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
+}
