@@ -2,6 +2,18 @@
 
 export type ConfigSource = 'custom' | 'example' | 'newapi';
 
+export type CostAuditCurrency = 'USD' | 'CNY' | 'points';
+
+export interface CostAuditConfig {
+  inputPricePerM?: number;
+  outputPricePerM?: number;
+  cachedInputPricePerM?: number;
+  cacheWritePricePerM?: number;
+  beforeBalance?: number;
+  afterBalance?: number;
+  currency?: CostAuditCurrency;
+}
+
 export interface ActiveConfig {
   providerName: string;
   baseUrl: string;
@@ -9,6 +21,7 @@ export interface ActiveConfig {
   modelId?: string;
   source?: ConfigSource;
   updatedAt: string;
+  costAudit?: CostAuditConfig;
 }
 
 // ─── Provider / Key (legacy — kept for migration compatibility) ─
@@ -134,6 +147,33 @@ export interface DiagnosisReport {
   totalCount: number;
   steps: DiagnosisStepResult[];
   usageSummary?: DiagnosisUsageSummary;
+}
+
+export type TrustScoreCategoryKey = 'execution' | 'cost' | 'access' | 'compatibility' | 'speed' | 'capability';
+
+export interface TrustScoreCategory {
+  key: TrustScoreCategoryKey;
+  label: string;
+  labelZh: string;
+  weight: number;
+  score: number;
+  status: DiagnosisStatus;
+}
+
+export interface TrustScore {
+  score: number;
+  confidence: 'high' | 'medium' | 'low';
+  categories: TrustScoreCategory[];
+  riskTags: string[];
+}
+
+export interface CostAuditResult {
+  estimatedCost?: number;
+  balanceDelta?: number;
+  costRatio?: number;
+  effectivePricePerM?: number;
+  currency: CostAuditCurrency;
+  status: 'ok' | 'review' | 'high-diff' | 'unavailable';
 }
 
 // ─── Legacy / Compatibility ────────────────────────────────

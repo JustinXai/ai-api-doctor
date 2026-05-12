@@ -33,7 +33,7 @@ import {
   setLanguage,
 } from '../../src/lib/storage';
 import { t, resolveLanguage, Language } from '../../src/lib/i18n';
-import type { ActiveConfig, DiagnosisReport } from '../../src/types';
+import type { ActiveConfig, DiagnosisReport, CostAuditConfig, CostAuditResult, TrustScore, TrustScoreCategory } from '../../src/types';
 
 // ─── Language Context ──────────────────────────────────────
 
@@ -107,16 +107,282 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 }
 
+// ─── Trust Score Calculator ───────────────────────────────
+
+function calculateTrustScore(report: DiagnosisReport): TrustScore {
+  const categories: TrustScoreCategory[] = [];
+  const riskTags: string[] = [];
+
+  // Access score (weight 20)
+  const baseUrlStep = report.steps[0];
+  const keyStep = report.steps[1];
+  const modelsStep = report.steps[2];
+  const modelStep = report.steps[3];
+  const chatStep = report.steps[4];
+
+  let accessScore = 100;
+  let accessStatus: 'success' | 'warning' | 'error' | 'skipped' = 'success';
+
+  if (baseUrlStep?.status === 'error' || keyStep?.status === 'error' || chatStep?.status === 'error') {
+    const errorStep = baseUrlStep?.status === 'error' ? baseUrlStep : keyStep?.status === 'error' ? keyStep : chatStep;
+    const httpStatus = errorStep?.httpStatus;
+    if (httpStatus === 401) {
+      accessScore = 20;
+      riskTags.push('401 Unauthorized');
+    } else if (httpStatus === 403) {
+      accessScore = 25;
+      riskTags.push('403 Forbidden');
+    } else if (httpStatus === 404) {
+      accessScore = 30;
+      riskTags.push('404 Not Found');
+    } else {
+      accessScore = 40;
+      riskTags.push('Access Error');
+    }
+    accessStatus = 'error';
+  } else if (modelStep?.status === 'warning' || !report.activeModelId) {
+    accessScore = 60;
+    accessStatus = 'warning';
+    riskTags.push('Model Not Selected');
+  } else if (chatStep?.status === 'success') {
+    accessScore = 95;
+    accessStatus = 'success';
+  } else {
+    accessScore = 70;
+    accessStatus = 'warning';
+  }
+
+  categories.push({
+    key: 'access',
+    label: 'Access',
+    labelZh: '访问权限',
+    weight: 20,
+    score: accessScore,
+    status: accessStatus,
+  });
+
+  // Execution score (weight 25)
+  let execScore = 50;
+  let execStatus: 'success' | 'warning' | 'error' | 'skipped' = 'skipped';
+
+  if (chatStep?.status === 'success') {
+    execScore = 90;
+    execStatus = 'success';
+  } else if (chatStep?.status === 'warning') {
+    execScore = 65;
+    execStatus = 'warning';
+    riskTags.push('Chat Warning');
+  } else if (chatStep?.status === 'error') {
+    execScore = 20;
+    execStatus = 'error';
+    riskTags.push('Chat Failed');
+  } else if (chatStep?.status === 'skipped') {
+    execScore = 50;
+    execStatus = 'skipped';
+    riskTags.push('Chat Skipped');
+  }
+
+  categories.push({
+    key: 'execution',
+    label: 'Execution',
+    labelZh: '执行能力',
+    weight: 25,
+    score: execScore,
+    status: execStatus,
+  });
+
+  // Cost score (weight 25)
+  let costScore = 75;
+  let costStatus: 'success' | 'warning' | 'error' | 'skipped' = 'success';
+
+  if (!report.usageSummary) {
+    costScore = 45;
+    costStatus = 'skipped';
+  } else if (report.usageSummary.status === 'available') {
+    costScore = 90;
+    costStatus = 'success';
+    if (report.usageSummary.totalTokens && report.usageSummary.totalTokens > 50000) {
+      costScore = 75;
+      costStatus = 'warning';
+      riskTags.push('High Token Usage');
+    }
+  } else if (report.usageSummary.status === 'missing') {
+    costScore = 55;
+    costStatus = 'warning';
+    riskTags.push('Usage Not Reported');
+  } else if (report.usageSummary.status === 'anomaly') {
+    costScore = 35;
+    costStatus = 'error';
+    riskTags.push('Usage Anomaly');
+  }
+
+  categories.push({
+    key: 'cost',
+    label: 'Cost',
+    labelZh: '用量核对',
+    weight: 25,
+    score: costScore,
+    status: costStatus,
+  });
+
+  // Compatibility score (weight 15)
+  let compatScore = 70;
+  let compatStatus: 'success' | 'warning' | 'error' | 'skipped' = 'warning';
+
+  if (modelsStep?.status === 'success' && modelsStep?.modelCount) {
+    compatScore = 80;
+    compatStatus = 'success';
+  } else if (modelsStep?.status === 'warning') {
+    compatScore = 60;
+    compatStatus = 'warning';
+  } else if (modelsStep?.status === 'error') {
+    compatScore = 30;
+    compatStatus = 'error';
+    riskTags.push('Models Endpoint Error');
+  }
+
+  categories.push({
+    key: 'compatibility',
+    label: 'Compatibility',
+    labelZh: '兼容性',
+    weight: 15,
+    score: compatScore,
+    status: compatStatus,
+  });
+
+  // Speed score (weight 10)
+  let speedScore = 70;
+  let speedStatus: 'success' | 'warning' | 'error' | 'skipped' = 'success';
+
+  const latency = report.totalLatencyMs || 0;
+  if (latency < 3000) {
+    speedScore = 95;
+    speedStatus = 'success';
+  } else if (latency < 8000) {
+    speedScore = 70;
+    speedStatus = 'warning';
+  } else if (latency < 20000) {
+    speedScore = 45;
+    speedStatus = 'warning';
+    riskTags.push('Slow Response');
+  } else {
+    speedScore = 25;
+    speedStatus = 'error';
+    riskTags.push('Very Slow');
+  }
+
+  categories.push({
+    key: 'speed',
+    label: 'Speed',
+    labelZh: '响应速度',
+    weight: 10,
+    score: speedScore,
+    status: speedStatus,
+  });
+
+  // Capability score (weight 5) - placeholder
+  categories.push({
+    key: 'capability',
+    label: 'Capability',
+    labelZh: '功能能力',
+    weight: 5,
+    score: 70,
+    status: 'skipped',
+  });
+
+  // Calculate total weighted score
+  const totalScore = Math.round(
+    categories.reduce((sum, cat) => sum + cat.score * (cat.weight / 100), 0)
+  );
+
+  // Determine confidence
+  let confidence: 'high' | 'medium' | 'low' = 'medium';
+  const skippedCount = categories.filter((c) => c.status === 'skipped').length;
+  if (skippedCount <= 1) {
+    confidence = 'high';
+  } else if (skippedCount >= 3) {
+    confidence = 'low';
+  }
+
+  return {
+    score: totalScore,
+    confidence,
+    categories,
+    riskTags: [...new Set(riskTags)],
+  };
+}
+
+// ─── Cost Audit Calculator ─────────────────────────────────
+
+function calculateCostAudit(
+  usage: DiagnosisReport['usageSummary'],
+  config?: CostAuditConfig
+): CostAuditResult {
+  const result: CostAuditResult = {
+    currency: config?.currency || 'USD',
+    status: 'unavailable',
+  };
+
+  if (!config?.inputPricePerM && !config?.outputPricePerM) {
+    return result;
+  }
+
+  if (!usage || !usage.hasUsage || usage.totalTokens === undefined) {
+    result.status = 'unavailable';
+    return result;
+  }
+
+  // Calculate estimated cost
+  const inputCost = (usage.promptTokens || 0) / 1_000_000 * (config.inputPricePerM || 0);
+  const outputCost = (usage.completionTokens || 0) / 1_000_000 * (config.outputPricePerM || 0);
+  const cachedCost = (usage.cachedTokens || 0) / 1_000_000 * (config.cachedInputPricePerM || 0);
+  result.estimatedCost = inputCost + outputCost + cachedCost;
+
+  // Calculate balance delta if both balances provided
+  if (config.beforeBalance !== undefined && config.afterBalance !== undefined) {
+    result.balanceDelta = config.beforeBalance - config.afterBalance;
+  }
+
+  // Calculate cost ratio
+  if (result.balanceDelta !== undefined && result.estimatedCost && result.estimatedCost > 0) {
+    result.costRatio = result.balanceDelta / result.estimatedCost;
+  }
+
+  // Calculate effective price
+  if (result.balanceDelta !== undefined && usage.totalTokens) {
+    result.effectivePricePerM = (result.balanceDelta / usage.totalTokens) * 1_000_000;
+  }
+
+  // Determine status
+  if (result.costRatio !== undefined) {
+    if (result.costRatio <= 1.2) {
+      result.status = 'ok';
+    } else if (result.costRatio <= 2) {
+      result.status = 'review';
+    } else {
+      result.status = 'high-diff';
+    }
+  } else {
+    result.status = 'ok';
+  }
+
+  return result;
+}
+
 // ─── Report Card V2 — Dark Incident Scorecard ─────────────
 
 function ReportCardV2({
   report,
   baseUrl,
   lang,
+  trustScore,
+  costAudit,
 }: {
   report: DiagnosisReport;
   baseUrl: string;
   lang: 'zh-CN' | 'en-US';
+  trustScore: ReturnType<typeof calculateTrustScore>;
+  costAudit: ReturnType<typeof calculateCostAudit>;
 }) {
   const { t } = useLang();
 
@@ -149,14 +415,28 @@ function ReportCardV2({
     },
   }[overallStatus];
 
-  // Calculate passed ratio for donut ring
-  const passedRatio = report.passedCount / report.totalCount;
-  const passedDeg = passedRatio * 360;
+  // Build weighted donut conic-gradient
+  const buildWeightedDonut = () => {
+    let currentDeg = 0;
+    const segments: string[] = [];
 
-  // Donut ring color based on status
-  const donutColor = overallStatus === 'ready' ? '#22C55E'
-    : overallStatus === 'needs-attention' ? '#F59E0B'
-    : '#EF4444';
+    trustScore.categories.forEach((cat) => {
+      const segmentDeg = (cat.weight / 100) * 360;
+      const color = cat.status === 'success' ? '#22C55E'
+        : cat.status === 'warning' ? '#F59E0B'
+        : cat.status === 'error' ? '#EF4444'
+        : '#64748B';
+      segments.push(`${color} ${currentDeg}deg ${currentDeg + segmentDeg}deg`);
+      currentDeg += segmentDeg;
+    });
+
+    return segments.join(', ') + `, rgba(148,163,184,0.15) ${currentDeg}deg 360deg`;
+  };
+
+  // Confidence label
+  const confidenceLabel = lang === 'zh-CN'
+    ? (trustScore.confidence === 'high' ? '高' : trustScore.confidence === 'medium' ? '中' : '低')
+    : trustScore.confidence.charAt(0).toUpperCase() + trustScore.confidence.slice(1);
 
   // Find main issue
   const firstError = report.steps.find((s) => s.status === 'error');
@@ -247,32 +527,57 @@ function ReportCardV2({
         </div>
       </div>
 
-      {/* Status Hero */}
+      {/* Status Hero with Trust Score */}
       <div className="rc2-hero">
-        {/* Donut Ring */}
+        {/* Weighted Donut Ring */}
         <div className="rc2-donut-wrap">
           <div
             className="rc2-donut"
-            style={{
-              background: `conic-gradient(${donutColor} 0deg ${passedDeg}deg, rgba(148,163,184,0.2) ${passedDeg}deg 360deg)`,
-            }}
+            style={{ background: buildWeightedDonut() }}
           >
             <div className="rc2-donut-inner">
               <div className="rc2-donut-center">
-                <span className="rc2-donut-count">{report.passedCount} / {report.totalCount}</span>
+                <span className="rc2-donut-count">{trustScore.score} / 100</span>
                 <span className="rc2-donut-label">
-                  {lang === 'zh-CN' ? '已通过' : 'checks passed'}
+                  {lang === 'zh-CN' ? 'API 可信分' : 'Trust Score'}
                 </span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Status Badge */}
-        <div className={`rc2-status-badge ${statusConfig.className}`}>
-          {statusConfig.label}
+        {/* Score Details */}
+        <div className="rc2-score-details">
+          <div className={`rc2-status-badge ${statusConfig.className}`}>
+            {statusConfig.label}
+          </div>
+          <div className="rc2-confidence">
+            {lang === 'zh-CN' ? '置信度' : 'Confidence'}: <span className={`rc2-confidence-${trustScore.confidence}`}>{confidenceLabel}</span>
+          </div>
+          {/* Legend */}
+          <div className="rc2-legend">
+            {trustScore.categories.map((cat) => (
+              <div key={cat.key} className={`rc2-legend-item rc2-legend-${cat.status}`}>
+                <span className="rc2-legend-dot" />
+                <span className="rc2-legend-label">
+                  {lang === 'zh-CN' ? cat.labelZh : cat.label}
+                </span>
+                <span className="rc2-legend-weight">{cat.weight}%</span>
+                <span className="rc2-legend-score">{cat.score}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
+
+      {/* Risk Tags */}
+      {trustScore.riskTags.length > 0 && (
+        <div className="rc2-risk-tags">
+          {trustScore.riskTags.map((tag, i) => (
+            <span key={i} className="rc2-risk-tag">{tag}</span>
+          ))}
+        </div>
+      )}
 
       {/* Main Issue */}
       <div className="rc2-section">
@@ -365,6 +670,64 @@ function ReportCardV2({
         </div>
       </div>
 
+      {/* Billing Evidence */}
+      {costAudit.status !== 'unavailable' && (
+        <div className="rc2-section">
+          <div className="rc2-section-title">
+            {lang === 'zh-CN' ? '扣费证据' : 'Billing Evidence'}
+          </div>
+          <div className="rc2-billing-grid">
+            {costAudit.estimatedCost !== undefined && (
+              <div className="rc2-billing-item">
+                <span className="rc2-billing-label">
+                  {lang === 'zh-CN' ? '估算成本' : 'Estimated Cost'}
+                </span>
+                <span className="rc2-billing-value">
+                  ${costAudit.estimatedCost.toFixed(6)} {costAudit.currency}
+                </span>
+              </div>
+            )}
+            {costAudit.balanceDelta !== undefined && (
+              <div className="rc2-billing-item">
+                <span className="rc2-billing-label">
+                  {lang === 'zh-CN' ? '余额差异' : 'Balance Delta'}
+                </span>
+                <span className="rc2-billing-value">
+                  {costAudit.balanceDelta >= 0 ? '+' : ''}{costAudit.balanceDelta.toFixed(4)} {costAudit.currency}
+                </span>
+              </div>
+            )}
+            {costAudit.costRatio !== undefined && (
+              <div className="rc2-billing-item">
+                <span className="rc2-billing-label">
+                  {lang === 'zh-CN' ? '成本比例' : 'Cost Ratio'}
+                </span>
+                <span className={`rc2-billing-value rc2-billing-ratio-${costAudit.status}`}>
+                  {costAudit.costRatio.toFixed(2)}x
+                </span>
+              </div>
+            )}
+            {costAudit.effectivePricePerM !== undefined && (
+              <div className="rc2-billing-item">
+                <span className="rc2-billing-label">
+                  {lang === 'zh-CN' ? '有效价格' : 'Effective Price'}/1M
+                </span>
+                <span className="rc2-billing-value">
+                  ${costAudit.effectivePricePerM.toFixed(4)}
+                </span>
+              </div>
+            )}
+          </div>
+          {costAudit.status !== 'ok' && (
+            <div className={`rc2-billing-status rc2-billing-status-${costAudit.status}`}>
+              {costAudit.status === 'review'
+                ? (lang === 'zh-CN' ? '需要复查，请对比服务商后台账单或联系站长核对。' : 'Needs review. Compare with provider dashboard or contact support.')
+                : (lang === 'zh-CN' ? '差异较高，请复查。' : 'High difference. Please review.')}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Footer */}
       <div className="rc2-footer">
         <span>{lang === 'zh-CN' ? '由 AI API Doctor 生成' : 'Generated by AI API Doctor'}</span>
@@ -394,11 +757,35 @@ function HomePage() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [showGuide, setShowGuide] = useState(true);
   const [showExample, setShowExample] = useState(false);
+  const [showCostAudit, setShowCostAudit] = useState(false);
+  const [costAuditInput, setCostAuditInput] = useState({
+    inputPricePerM: '',
+    outputPricePerM: '',
+    cachedInputPricePerM: '',
+    cacheWritePricePerM: '',
+    beforeBalance: '',
+    afterBalance: '',
+    currency: 'USD' as 'USD' | 'CNY' | 'points',
+  });
   const reportCardRef = useRef<HTMLDivElement>(null);
+  const mainContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getActiveConfig().then((c) => {
-      if (c) setConfig(c);
+      if (c) {
+        setConfig(c);
+        if (c.costAudit) {
+          setCostAuditInput({
+            inputPricePerM: c.costAudit.inputPricePerM?.toString() || '',
+            outputPricePerM: c.costAudit.outputPricePerM?.toString() || '',
+            cachedInputPricePerM: c.costAudit.cachedInputPricePerM?.toString() || '',
+            cacheWritePricePerM: c.costAudit.cacheWritePricePerM?.toString() || '',
+            beforeBalance: c.costAudit.beforeBalance?.toString() || '',
+            afterBalance: c.costAudit.afterBalance?.toString() || '',
+            currency: c.costAudit.currency || 'USD',
+          });
+        }
+      }
     });
   }, []);
 
@@ -421,10 +808,19 @@ function HomePage() {
   }, [t]);
 
   const handleSave = useCallback(async () => {
-    const next = { ...config, updatedAt: new Date().toISOString() };
+    const costAudit: CostAuditConfig = {};
+    if (costAuditInput.inputPricePerM) costAudit.inputPricePerM = parseFloat(costAuditInput.inputPricePerM);
+    if (costAuditInput.outputPricePerM) costAudit.outputPricePerM = parseFloat(costAuditInput.outputPricePerM);
+    if (costAuditInput.cachedInputPricePerM) costAudit.cachedInputPricePerM = parseFloat(costAuditInput.cachedInputPricePerM);
+    if (costAuditInput.cacheWritePricePerM) costAudit.cacheWritePricePerM = parseFloat(costAuditInput.cacheWritePricePerM);
+    if (costAuditInput.beforeBalance) costAudit.beforeBalance = parseFloat(costAuditInput.beforeBalance);
+    if (costAuditInput.afterBalance) costAudit.afterBalance = parseFloat(costAuditInput.afterBalance);
+    costAudit.currency = costAuditInput.currency;
+
+    const next = { ...config, updatedAt: new Date().toISOString(), costAudit: Object.keys(costAudit).length > 0 ? costAudit : undefined };
     await saveActiveConfig(next);
     setConfig(next);
-  }, [config]);
+  }, [config, costAuditInput]);
 
   const handleRun = useCallback(async () => {
     if (!config.baseUrl || !config.apiKey) return;
@@ -436,6 +832,15 @@ function HomePage() {
       const rep = await runDiagnosis(next);
       setReport(rep);
       setConfig(next);
+
+      // Scroll to report after diagnosis
+      setTimeout(() => {
+        if (reportCardRef.current) {
+          reportCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else if (mainContentRef.current) {
+          mainContentRef.current.scrollTop = 0;
+        }
+      }, 100);
     } catch (e) {
       console.error('Diagnosis error:', e);
     } finally {
@@ -463,6 +868,23 @@ function HomePage() {
       const lines: string[] = [];
       lines.push('# AI API Doctor Report');
       lines.push('');
+
+      // Trust Score
+      const trustScore = calculateTrustScore(report);
+      lines.push(`**API Trust Score:** ${trustScore.score} / 100`);
+      lines.push(`**Confidence:** ${trustScore.confidence}`);
+      lines.push('');
+      lines.push('| Category | Weight | Score |');
+      lines.push('|---|---|---|');
+      trustScore.categories.forEach(cat => {
+        lines.push(`| ${lang === 'zh-CN' ? cat.labelZh : cat.label} | ${cat.weight}% | ${cat.score} |`);
+      });
+      if (trustScore.riskTags.length > 0) {
+        lines.push('');
+        lines.push(`**Risk Tags:** ${trustScore.riskTags.join(', ')}`);
+      }
+      lines.push('');
+
       const statusLabel = report.overallStatus === 'success' ? 'Ready' : report.overallStatus === 'warning' ? 'Needs Attention' : 'Failed';
       lines.push(`**Status:** ${statusLabel}`);
       lines.push(`**Checks:** ${report.passedCount} / ${report.totalCount} passed`);
@@ -474,6 +896,7 @@ function HomePage() {
       lines.push(`| **API Key** | \`${report.maskedKey}\` |`);
       if (report.activeModelId) lines.push(`| **Model** | \`${report.activeModelId}\` |`);
       lines.push('');
+
       const firstErr = report.steps.find((s) => s.status === 'error');
       const firstWrn = report.steps.find((s) => s.status === 'warning');
       const main = firstErr || firstWrn;
@@ -485,6 +908,18 @@ function HomePage() {
         if (main.suggestion) lines.push(`- **Suggestion:** ${main.suggestion.replace(/\n/g, ' ')}`);
         lines.push('');
       }
+
+      // Cost Audit
+      const costAudit = calculateCostAudit(report.usageSummary, config.costAudit);
+      if (costAudit.status !== 'unavailable') {
+        lines.push('**Billing Evidence:**');
+        if (costAudit.estimatedCost !== undefined) lines.push(`- **Estimated Cost:** $${costAudit.estimatedCost.toFixed(6)} ${costAudit.currency}`);
+        if (costAudit.balanceDelta !== undefined) lines.push(`- **Balance Delta:** ${costAudit.balanceDelta >= 0 ? '+' : ''}${costAudit.balanceDelta.toFixed(4)} ${costAudit.currency}`);
+        if (costAudit.costRatio !== undefined) lines.push(`- **Cost Ratio:** ${costAudit.costRatio.toFixed(2)}x`);
+        if (costAudit.effectivePricePerM !== undefined) lines.push(`- **Effective Price / 1M:** $${costAudit.effectivePricePerM.toFixed(4)}`);
+        lines.push('');
+      }
+
       if (report.usageSummary?.status === 'available' || report.usageSummary?.status === 'anomaly') {
         lines.push('**Usage:**');
         if (report.usageSummary.totalTokens !== undefined) lines.push(`- \`total_tokens: ${report.usageSummary.totalTokens}\``);
@@ -499,7 +934,7 @@ function HomePage() {
       setCopyState('md');
       setTimeout(() => setCopyState('idle'), 2000);
     } catch { setCopyState('idle'); }
-  }, [report, config]);
+  }, [report, config, lang]);
 
   const handleCopyIssue = useCallback(async () => {
     if (!report) return;
@@ -739,6 +1174,102 @@ function HomePage() {
         </div>
       </div>
 
+      {/* Cost Audit Section */}
+      <div className="cost-audit-section">
+        <button
+          className="cost-audit-toggle"
+          onClick={() => setShowCostAudit(!showCostAudit)}
+        >
+          <span>{lang === 'zh-CN' ? '扣费核对（可选）' : 'Cost Audit (Optional)'}</span>
+          {showCostAudit ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+        {showCostAudit && (
+          <div className="cost-audit-body">
+            <div className="cost-audit-hint">
+              {lang === 'zh-CN'
+                ? '填写价格后，根据 response.usage 估算成本。填写诊断前后余额可核对差异。'
+                : 'Enter prices to estimate cost. Enter before/after balance to compare difference.'}
+            </div>
+            <div className="cost-audit-grid">
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '输入价格 / 1M' : 'Input Price / 1M'}</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="0.50"
+                  value={costAuditInput.inputPricePerM}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, inputPricePerM: e.target.value }))}
+                />
+              </div>
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '输出价格 / 1M' : 'Output Price / 1M'}</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="1.50"
+                  value={costAuditInput.outputPricePerM}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, outputPricePerM: e.target.value }))}
+                />
+              </div>
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '缓存读取价格 / 1M' : 'Cache Input / 1M'}</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="0.10"
+                  value={costAuditInput.cachedInputPricePerM}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, cachedInputPricePerM: e.target.value }))}
+                />
+              </div>
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '缓存写入价格 / 1M' : 'Cache Write / 1M'}</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="0.10"
+                  value={costAuditInput.cacheWritePricePerM}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, cacheWritePricePerM: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="cost-audit-grid">
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '诊断前余额' : 'Before Balance'}</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="10.00"
+                  value={costAuditInput.beforeBalance}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, beforeBalance: e.target.value }))}
+                />
+              </div>
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '诊断后余额' : 'After Balance'}</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="9.95"
+                  value={costAuditInput.afterBalance}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, afterBalance: e.target.value }))}
+                />
+              </div>
+              <div className="cost-audit-field">
+                <label>{lang === 'zh-CN' ? '货币' : 'Currency'}</label>
+                <select
+                  className="form-input"
+                  value={costAuditInput.currency}
+                  onChange={(e) => setCostAuditInput(prev => ({ ...prev, currency: e.target.value as 'USD' | 'CNY' | 'points' }))}
+                >
+                  <option value="USD">USD</option>
+                  <option value="CNY">CNY</option>
+                  <option value="points">Points</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Example Provider */}
       <div className="example-strip">
         <div className="example-strip-text">
@@ -751,49 +1282,55 @@ function HomePage() {
       <div className="example-footnote">{t('exampleProviderBy')}</div>
 
       {/* Report Card V2 */}
-      {report && (
-        <>
-          <div ref={reportCardRef}>
-            <ReportCardV2
-              report={report}
-              baseUrl={config.baseUrl}
-              lang={lang}
-            />
-          </div>
+      {report && (() => {
+        const trustScore = calculateTrustScore(report);
+        const costAudit = calculateCostAudit(report.usageSummary, config.costAudit);
+        return (
+          <>
+            <div ref={reportCardRef}>
+              <ReportCardV2
+                report={report}
+                baseUrl={config.baseUrl}
+                lang={lang}
+                trustScore={trustScore}
+                costAudit={costAudit}
+              />
+            </div>
 
-          {/* Action Buttons */}
-          <div className="report-actions">
-            <button
-              className={`report-btn ${copyState === 'md' ? 'copied' : ''}`}
-              onClick={handleCopyMd}
-            >
-              {copyState === 'md' ? t('copied') : t('copyMarkdown')}
-            </button>
-            <button
-              className={`report-btn ${copyState === 'issue' ? 'copied' : ''}`}
-              onClick={handleCopyIssue}
-            >
-              {copyState === 'issue' ? t('copied') : t('copyIssue')}
-            </button>
-            <button
-              className={`report-btn ${copyState === 'text' ? 'copied' : ''}`}
-              onClick={handleCopyText}
-            >
-              {copyState === 'text' ? t('copied') : t('copyResultText')}
-            </button>
-            <button
-              className={`report-btn report-btn-save ${saveState === 'saving' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
-              onClick={handleSaveImage}
-              disabled={saveState === 'saving'}
-            >
-              {saveState === 'saving' ? t('savingImage') :
-               saveState === 'saved' ? t('imageSaved') :
-               saveState === 'failed' ? t('saveImageFailed') :
-               t('saveImage')}
-            </button>
-          </div>
-        </>
-      )}
+            {/* Action Buttons */}
+            <div className="report-actions">
+              <button
+                className={`report-btn ${copyState === 'md' ? 'copied' : ''}`}
+                onClick={handleCopyMd}
+              >
+                {copyState === 'md' ? t('copied') : t('copyMarkdown')}
+              </button>
+              <button
+                className={`report-btn ${copyState === 'issue' ? 'copied' : ''}`}
+                onClick={handleCopyIssue}
+              >
+                {copyState === 'issue' ? t('copied') : t('copyIssue')}
+              </button>
+              <button
+                className={`report-btn ${copyState === 'text' ? 'copied' : ''}`}
+                onClick={handleCopyText}
+              >
+                {copyState === 'text' ? t('copied') : t('copyResultText')}
+              </button>
+              <button
+                className={`report-btn report-btn-save ${saveState === 'saving' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
+                onClick={handleSaveImage}
+                disabled={saveState === 'saving'}
+              >
+                {saveState === 'saving' ? t('savingImage') :
+                 saveState === 'saved' ? t('imageSaved') :
+                 saveState === 'failed' ? t('saveImageFailed') :
+                 t('saveImage')}
+              </button>
+            </div>
+          </>
+        );
+      })()}
 
       {/* Quick Guide */}
       <div className="guide-section">

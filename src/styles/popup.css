@@ -2311,6 +2311,206 @@ body {
   line-height: 1.5;
 }
 
+/* Score Details */
+.rc2-score-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rc2-confidence {
+  font-size: 11px;
+  color: #94A3B8;
+}
+
+.rc2-confidence-high { color: #22C55E; }
+.rc2-confidence-medium { color: #F59E0B; }
+.rc2-confidence-low { color: #EF4444; }
+
+/* Legend */
+.rc2-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.rc2-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.rc2-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.rc2-legend-success .rc2-legend-dot { background-color: #22C55E; }
+.rc2-legend-warning .rc2-legend-dot { background-color: #F59E0B; }
+.rc2-legend-error .rc2-legend-dot { background-color: #EF4444; }
+.rc2-legend-skipped .rc2-legend-dot { background-color: #64748B; }
+
+.rc2-legend-label {
+  flex: 1;
+  color: #CBD5E1;
+}
+
+.rc2-legend-weight {
+  color: #64748B;
+  font-size: 9px;
+}
+
+.rc2-legend-score {
+  color: #F8FAFC;
+  font-weight: 600;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* Risk Tags */
+.rc2-risk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 20px;
+  background-color: #0D1117;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.rc2-risk-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #EF4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Billing Evidence */
+.rc2-billing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rc2-billing-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background-color: #101827;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.rc2-billing-label {
+  font-size: 9px;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rc2-billing-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #F8FAFC;
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.rc2-billing-ratio-ok { color: #22C55E; }
+.rc2-billing-ratio-review { color: #F59E0B; }
+.rc2-billing-ratio-high-diff { color: #EF4444; }
+
+.rc2-billing-status {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.rc2-billing-status-review {
+  background-color: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #F59E0B;
+}
+
+.rc2-billing-status-high-diff {
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #EF4444;
+}
+
+/* Cost Audit Section */
+.cost-audit-section {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.cost-audit-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: none;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.12s;
+  letter-spacing: 0.01em;
+}
+
+.cost-audit-toggle:hover {
+  background-color: var(--code-bg);
+}
+
+.cost-audit-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.cost-audit-hint {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.cost-audit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.cost-audit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cost-audit-field label {
+  font-size: 9px;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 /* Metrics */
 .rc2-metrics {
   display: grid;
