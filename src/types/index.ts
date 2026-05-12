@@ -108,6 +108,7 @@ export interface DiagnosisStepResult {
   suggestion?: string;
   errorType?: ApiErrorType;
   usage?: DiagnosisUsage;
+  modelCount?: number;
 }
 
 export interface DiagnosisUsageSummary {

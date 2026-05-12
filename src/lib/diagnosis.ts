@@ -395,6 +395,7 @@ export async function runDiagnosis(
             ok('models_endpoint', 'Models Endpoint', `Models list accessible (${modelCount} models).`, {
               latencyMs: Date.now() - t0,
               httpStatus: status,
+              modelCount,
             })
           );
         } else {

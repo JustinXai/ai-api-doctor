@@ -593,7 +593,7 @@ export async function runDiagnosis(config: ActiveConfig): Promise<DiagnosisRepor
         if (hasData) {
           modelsOk = true;
           const count = Array.isArray(parsed) ? parsed.length : ((parsed as { data: unknown[] }).data.length);
-          steps.push({ id: 'models_endpoint', title: 'Models Endpoint', status: 'success', message: `Models list accessible (${count} models).`, httpStatus: status, latencyMs: Date.now() - t0 });
+          steps.push({ id: 'models_endpoint', title: 'Models Endpoint', status: 'success', message: `Models list accessible (${count} models).`, httpStatus: status, latencyMs: Date.now() - t0, modelCount: count });
         } else {
           steps.push({ id: 'models_endpoint', title: 'Models Endpoint', status: 'warning', message: 'Unexpected response format.', httpStatus: status, latencyMs: Date.now() - t0 });
         }

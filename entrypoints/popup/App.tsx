@@ -59,9 +59,9 @@ function useLang() {
 
 type Page = 'home' | 'models' | 'export' | 'help';
 
-// ─── Report Card ──────────────────────────────────────────
+// ─── Report Card V2 — Dark Incident Scorecard ─────────────
 
-function ReportCard({
+function ReportCardV2({
   report,
   baseUrl,
   lang,
@@ -84,102 +84,258 @@ function ReportCard({
 }) {
   const { t } = useLang();
 
-  const statusLabel =
-    report.overallStatus === 'success' ? t('ready') :
-    report.overallStatus === 'warning' ? t('needsAttention') :
-    t('failed');
-  const statusClass =
-    report.overallStatus === 'success' ? 'card-ok' :
-    report.overallStatus === 'warning' ? 'card-warn' : 'card-fail';
+  // Determine overall status from steps
+  const hasError = report.steps.some((s) => s.status === 'error');
+  const hasWarning = report.steps.some((s) => s.status === 'warning');
 
-  const checksLabel = lang === 'zh-CN'
-    ? `已通过 ${report.passedCount} / ${report.totalCount} 项`
-    : `${report.passedCount} / ${report.totalCount} passed`;
+  let overallStatus: 'ready' | 'needs-attention' | 'failed';
+  if (hasError) {
+    overallStatus = 'failed';
+  } else if (hasWarning) {
+    overallStatus = 'needs-attention';
+  } else {
+    overallStatus = 'ready';
+  }
 
+  // Status label and color
+  const statusConfig = {
+    ready: {
+      label: lang === 'zh-CN' ? '可用' : 'READY',
+      className: 'status-ready',
+    },
+    'needs-attention': {
+      label: lang === 'zh-CN' ? '需要处理' : 'NEEDS ATTENTION',
+      className: 'status-attention',
+    },
+    failed: {
+      label: lang === 'zh-CN' ? '失败' : 'FAILED',
+      className: 'status-failed',
+    },
+  }[overallStatus];
+
+  // Calculate passed ratio for donut ring
+  const passedRatio = report.passedCount / report.totalCount;
+  const passedDeg = passedRatio * 360;
+
+  // Donut ring color based on status
+  const donutColor = overallStatus === 'ready' ? '#22C55E'
+    : overallStatus === 'needs-attention' ? '#F59E0B'
+    : '#EF4444';
+
+  // Find main issue
   const firstError = report.steps.find((s) => s.status === 'error');
-  const firstWarn = report.steps.find((s) => s.status === 'warning');
-  const mainIssue = firstError || firstWarn;
-  const mainIssueLabel = mainIssue?.title ||
-    (lang === 'zh-CN' ? '未发现主要问题' : 'No major issue found');
+  const firstWarning = report.steps.find((s) => s.status === 'warning');
+  const mainIssue = firstError || firstWarning;
+  const mainIssueLabel = mainIssue?.title
+    || (lang === 'zh-CN' ? '未发现主要问题' : 'No major issue found');
 
-  const usageStr = report.usageSummary?.status === 'available' || report.usageSummary?.status === 'anomaly'
-    ? `${report.usageSummary.totalTokens} total` +
-      (report.usageSummary.promptTokens !== undefined ? ` / ${report.usageSummary.promptTokens} prompt` : '') +
-      (report.usageSummary.completionTokens !== undefined ? ` / ${report.usageSummary.completionTokens} completion` : '')
-    : report.usageSummary?.status === 'missing'
-    ? (lang === 'zh-CN' ? '未返回用量' : 'Not reported')
-    : (lang === 'zh-CN' ? '未测试用量' : 'Not tested');
+  // Suggestion
+  const topSuggestion = mainIssue?.suggestion
+    || (lang === 'zh-CN' ? '本次测试中配置看起来可用。' : 'Configuration looks usable for this test.');
 
-  const tokensPerSec = report.usageSummary?.status === 'available' && report.usageSummary.totalTokens && report.totalLatencyMs
-    ? ((report.usageSummary.totalTokens / report.totalLatencyMs) * 1000).toFixed(1)
-    : null;
+  // Usage string
+  const usageStr = (() => {
+    if (!report.usageSummary) return lang === 'zh-CN' ? '未测试' : 'Not tested';
+    if (report.usageSummary.status === 'available' || report.usageSummary.status === 'anomaly') {
+      return `${report.usageSummary.totalTokens} tokens`;
+    }
+    if (report.usageSummary.status === 'missing') {
+      return lang === 'zh-CN' ? '未返回' : 'Not reported';
+    }
+    return lang === 'zh-CN' ? '未测试' : 'Not tested';
+  })();
+
+  // Latency
+  const latencyStr = report.totalLatencyMs ? `${report.totalLatencyMs}ms` : null;
+
+  // Tokens per second
+  const tokensPerSec = (() => {
+    if (report.usageSummary?.status === 'available' && report.usageSummary.totalTokens && report.totalLatencyMs) {
+      return ((report.usageSummary.totalTokens / report.totalLatencyMs) * 1000).toFixed(1);
+    }
+    return null;
+  })();
+
+  // Models count
+  const modelsCount = (() => {
+    const modelsStep = report.steps.find((s) => s.title.toLowerCase().includes('model'));
+    if (modelsStep?.modelCount !== undefined) {
+      return lang === 'zh-CN' ? `${modelsStep.modelCount} 个` : `${modelsStep.modelCount} found`;
+    }
+    return lang === 'zh-CN' ? '—' : '—';
+  })();
+
+  // Step definitions
+  const stepNames = ['Base URL', 'Key', 'Models', 'Model', 'Chat', 'Usage', 'Audit'];
+  const stepNameKeys = [
+    'reportCardStepBaseUrl',
+    'reportCardStepKey',
+    'reportCardStepModels',
+    'reportCardStepModel',
+    'reportCardStepChat',
+    'reportCardStepUsage',
+    'reportCardStepAudit',
+  ];
+
+  // Get step status
+  const getStepStatus = (index: number): 'success' | 'warning' | 'error' | 'skipped' => {
+    const step = report.steps[index];
+    if (!step) return 'skipped';
+    if (step.status === 'error') return 'error';
+    if (step.status === 'warning') return 'warning';
+    if (step.status === 'skipped') return 'skipped';
+    return 'success';
+  };
+
+  // Truncate base URL for display (but keep full in title)
+  const displayBaseUrl = baseUrl.length > 40 ? baseUrl.slice(0, 37) + '...' : baseUrl;
+
+  // Provider message (sanitized, no API key)
+  const sanitizeMessage = (msg: string | undefined): string => {
+    if (!msg) return '';
+    return msg.replace(/sk-[a-zA-Z0-9]{20,}/g, 'sk-***').replace(/api-[a-zA-Z0-9]{20,}/g, 'api-***');
+  };
 
   return (
-    <div className="report-card" ref={reportCardRef}>
-      <div className="report-card-head">
-        <span className="report-brand">AI API Doctor</span>
-        <span className="report-sub">{t('diagnosisResult')}</span>
+    <div className="report-card-v2" ref={reportCardRef}>
+      {/* Header */}
+      <div className="rc2-header">
+        <div className="rc2-header-left">
+          <div className="rc2-brand">AI API Doctor</div>
+          <div className="rc2-subtitle">
+            {lang === 'zh-CN' ? '本地 API 诊断' : 'Local API diagnosis'}
+          </div>
+        </div>
+        <div className="rc2-header-right">
+          {lang === 'zh-CN' ? 'API Key 已脱敏 · 本地报告' : 'Key masked · Local report'}
+        </div>
       </div>
-      <div className="report-card-body">
-        <div className="report-row">
-          <span className="report-label">{t('status')}</span>
-          <span className={`report-value ${statusClass}`}>{statusLabel}</span>
+
+      {/* Status Hero */}
+      <div className="rc2-hero">
+        {/* Donut Ring */}
+        <div className="rc2-donut-wrap">
+          <div
+            className="rc2-donut"
+            style={{
+              background: `conic-gradient(${donutColor} 0deg ${passedDeg}deg, rgba(148,163,184,0.2) ${passedDeg}deg 360deg)`,
+            }}
+          >
+            <div className="rc2-donut-inner">
+              <div className="rc2-donut-center">
+                <span className="rc2-donut-count">{report.passedCount} / {report.totalCount}</span>
+                <span className="rc2-donut-label">
+                  {lang === 'zh-CN' ? '已通过' : 'checks passed'}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="report-row">
-          <span className="report-label">{t('checks')}</span>
-          <span className="report-value">{checksLabel}</span>
+
+        {/* Status Badge */}
+        <div className={`rc2-status-badge ${statusConfig.className}`}>
+          {statusConfig.label}
         </div>
-        <div className="report-row">
-          <span className="report-label">{t('provider')}</span>
-          <span className="report-value">{report.providerName}</span>
+      </div>
+
+      {/* Main Issue */}
+      <div className="rc2-section">
+        <div className="rc2-section-title">
+          {lang === 'zh-CN' ? '主要问题' : 'Main Issue'}
         </div>
-        <div className="report-row">
-          <span className="report-label">{t('baseUrl_')}</span>
-          <span className="report-value report-mono">{baseUrl}</span>
-        </div>
-        <div className="report-row">
-          <span className="report-label">{t('model')}</span>
-          <span className="report-value report-mono">
-            {report.activeModelId || (lang === 'zh-CN' ? '未选择' : 'Not selected')}
-          </span>
-        </div>
-        <div className="report-row">
-          <span className="report-label">{t('mainIssue')}</span>
-          <span className="report-value">{mainIssueLabel}</span>
+        <div className="rc2-main-issue">
+          {mainIssueLabel}
         </div>
         {mainIssue?.httpStatus && (
-          <div className="report-row">
-            <span className="report-label">{t('httpStatus')}</span>
-            <span className="report-value report-mono">{mainIssue.httpStatus}</span>
+          <div className="rc2-http-badge">
+            HTTP {mainIssue.httpStatus}
           </div>
         )}
         {mainIssue?.providerMessage && (
-          <div className="report-row">
-            <span className="report-label">{t('providerMessage')}</span>
-            <span className="report-value">{mainIssue.providerMessage}</span>
+          <div className="rc2-provider-msg">
+            <code>{sanitizeMessage(mainIssue.providerMessage)}</code>
           </div>
         )}
-        {mainIssue?.suggestion && (
-          <div className="report-row">
-            <span className="report-label">{t('suggestion')}</span>
-            <span className="report-value">{mainIssue.suggestion.replace(/\n/g, ' ')}</span>
-          </div>
-        )}
-        <div className="report-row">
-          <span className="report-label">{t('usage')}</span>
-          <span className="report-value report-mono">{usageStr}</span>
+      </div>
+
+      {/* Suggestion */}
+      <div className="rc2-section">
+        <div className="rc2-section-title">
+          {lang === 'zh-CN' ? '建议' : 'Suggestion'}
         </div>
-        {report.totalLatencyMs && (
-          <div className="report-row">
-            <span className="report-label">{t('latency')}</span>
-            <span className="report-value report-mono">{report.totalLatencyMs}ms{tokensPerSec ? ` / ${tokensPerSec} tokens/s` : ''}</span>
-          </div>
-        )}
+        <div className="rc2-suggestion">
+          {topSuggestion.replace(/\n/g, ' ')}
+        </div>
       </div>
-      <div className="report-card-foot">
-        <span className="report-footer">{t('reportFooter')}</span>
-        <span className="report-url">{t('reportUrl')}</span>
+
+      {/* Metrics */}
+      <div className="rc2-metrics">
+        <div className="rc2-metric">
+          <span className="rc2-metric-value">{latencyStr || '—'}</span>
+          <span className="rc2-metric-label">
+            {lang === 'zh-CN' ? '延迟' : 'Latency'}
+          </span>
+        </div>
+        <div className="rc2-metric">
+          <span className="rc2-metric-value">{usageStr}</span>
+          <span className="rc2-metric-label">
+            {lang === 'zh-CN' ? '用量' : 'Usage'}
+          </span>
+        </div>
+        <div className="rc2-metric">
+          <span className="rc2-metric-value">{tokensPerSec || '—'}</span>
+          <span className="rc2-metric-label">
+            {lang === 'zh-CN' ? 'Tokens/s' : 'Tokens/s'}
+          </span>
+        </div>
+        <div className="rc2-metric">
+          <span className="rc2-metric-value">{modelsCount}</span>
+          <span className="rc2-metric-label">
+            {lang === 'zh-CN' ? '模型数' : 'Models'}
+          </span>
+        </div>
       </div>
+
+      {/* Checks Status Bar */}
+      <div className="rc2-checks">
+        {stepNameKeys.map((key, i) => {
+          const status = getStepStatus(i);
+          const dotClass = `rc2-dot rc2-dot-${status}`;
+          const pillClass = `rc2-step-pill rc2-pill-${status}`;
+          return (
+            <div key={key} className={pillClass}>
+              <span className={dotClass} />
+              <span className="rc2-step-name">{t(key)}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Context */}
+      <div className="rc2-context">
+        <div className="rc2-context-row">
+          <span className="rc2-context-label">Provider:</span>
+          <span className="rc2-context-value">{report.providerName}</span>
+        </div>
+        <div className="rc2-context-row">
+          <span className="rc2-context-label">Base URL:</span>
+          <span className="rc2-context-value rc2-context-mono" title={baseUrl}>{displayBaseUrl}</span>
+        </div>
+        <div className="rc2-context-row">
+          <span className="rc2-context-label">Model:</span>
+          <span className="rc2-context-value rc2-context-mono">
+            {report.activeModelId || (lang === 'zh-CN' ? '未选择' : 'Not selected')}
+          </span>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="rc2-footer">
+        <span>Generated by AI API Doctor</span>
+        <span className="rc2-footer-url">aiapidoctor.com</span>
+      </div>
+
+      {/* Actions (hidden in export) */}
       <div className="report-actions">
         <button className={`report-btn ${copyState === 'md' ? 'copied' : ''}`} onClick={onCopyMd}>
           {copyState === 'md' ? t('copied') : t('copyMarkdown')}
@@ -434,17 +590,27 @@ function HomePage() {
   const handleSaveImage = useCallback(async () => {
     if (!reportCardRef.current) return;
     setSaveState('saving');
+
+    const card = reportCardRef.current;
+
+    // Add export-mode class for larger dimensions
+    card.classList.add('export-mode');
+
+    // Wait for layout to update
+    await new Promise(resolve => setTimeout(resolve, 50));
+
     try {
-      const dataUrl = await toPng(reportCardRef.current, {
+      const dataUrl = await toPng(card, {
         cacheBust: true,
         pixelRatio: 2,
-        backgroundColor: '#0f172a',
+        backgroundColor: '#080B16',
         filter: (node) => {
           // Exclude the action buttons from the screenshot
           const el = node as HTMLElement;
           return !el.classList?.contains('report-actions');
         },
       });
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const filename = `ai-api-doctor-report-${timestamp}.png`;
       const a = document.createElement('a');
@@ -457,6 +623,9 @@ function HomePage() {
       console.error('Save image error:', err);
       setSaveState('failed');
       setTimeout(() => setSaveState('idle'), 2000);
+    } finally {
+      // Remove export-mode class
+      card.classList.remove('export-mode');
     }
   }, []);
 
@@ -568,9 +737,9 @@ function HomePage() {
       </div>
       <div className="example-footnote">{t('exampleProviderBy')}</div>
 
-      {/* Report Card */}
+      {/* Report Card V2 */}
       {report && (
-        <ReportCard
+        <ReportCardV2
           report={report}
           baseUrl={config.baseUrl}
           lang={lang}

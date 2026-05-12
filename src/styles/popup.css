@@ -2071,6 +2071,470 @@ body {
 }
 
 /* ============================================================
+   MVP — Report Card V2 (Dark Incident Scorecard)
+   ============================================================ */
+
+.report-card-v2 {
+  background-color: #080B16;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 20px;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+}
+
+/* Header */
+.rc2-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background-color: #101827;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.rc2-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rc2-brand {
+  font-size: 16px;
+  font-weight: 700;
+  color: #F8FAFC;
+  letter-spacing: -0.02em;
+}
+
+.rc2-subtitle {
+  font-size: 11px;
+  color: #94A3B8;
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.rc2-header-right {
+  font-size: 10px;
+  color: #64748B;
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+/* Status Hero */
+.rc2-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px 20px;
+  background-color: #0D1117;
+}
+
+/* Donut Ring */
+.rc2-donut-wrap {
+  position: relative;
+  width: 100px;
+  height: 100px;
+}
+
+.rc2-donut {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rc2-donut-inner {
+  width: 72px;
+  height: 72px;
+  background-color: #0D1117;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rc2-donut-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.rc2-donut-count {
+  font-size: 18px;
+  font-weight: 700;
+  color: #F8FAFC;
+  line-height: 1;
+}
+
+.rc2-donut-label {
+  font-size: 9px;
+  color: #94A3B8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Status Badge */
+.rc2-status-badge {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 8px 20px;
+  border-radius: 8px;
+}
+
+.rc2-status-badge.status-ready {
+  color: #22C55E;
+  background-color: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  text-shadow: 0 0 20px rgba(34, 197, 94, 0.5);
+}
+
+.rc2-status-badge.status-attention {
+  color: #F59E0B;
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
+}
+
+.rc2-status-badge.status-failed {
+  color: #EF4444;
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  text-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+}
+
+/* Sections */
+.rc2-section {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.rc2-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.rc2-main-issue {
+  font-size: 14px;
+  font-weight: 600;
+  color: #F8FAFC;
+  line-height: 1.4;
+}
+
+.rc2-http-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #EF4444;
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-top: 8px;
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.rc2-provider-msg {
+  margin-top: 8px;
+  background-color: #101827;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.rc2-provider-msg code {
+  font-size: 11px;
+  color: #94A3B8;
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+  word-break: break-all;
+}
+
+.rc2-suggestion {
+  font-size: 13px;
+  color: #CBD5E1;
+  line-height: 1.5;
+}
+
+/* Metrics */
+.rc2-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background-color: rgba(148, 163, 184, 0.15);
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.rc2-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background-color: #080B16;
+}
+
+.rc2-metric-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #F8FAFC;
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.rc2-metric-label {
+  font-size: 9px;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Checks Status Bar */
+.rc2-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 16px 20px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  background-color: #0D1117;
+}
+
+.rc2-step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background-color: #101827;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.rc2-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rc2-dot-success { background-color: #22C55E; }
+.rc2-dot-warning { background-color: #F59E0B; }
+.rc2-dot-error { background-color: #EF4444; }
+.rc2-dot-skipped { background-color: #64748B; }
+
+.rc2-step-name {
+  font-size: 10px;
+  font-weight: 500;
+  color: #94A3B8;
+}
+
+.rc2-pill-success { border-color: rgba(34, 197, 94, 0.3); }
+.rc2-pill-warning { border-color: rgba(245, 158, 11, 0.3); }
+.rc2-pill-error { border-color: rgba(239, 68, 68, 0.3); }
+.rc2-pill-skipped { border-color: rgba(148, 163, 184, 0.15); }
+
+/* Context */
+.rc2-context {
+  padding: 12px 20px;
+  background-color: #0D1117;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rc2-context-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rc2-context-label {
+  font-size: 10px;
+  color: #64748B;
+  width: 70px;
+  flex-shrink: 0;
+}
+
+.rc2-context-value {
+  font-size: 11px;
+  color: #CBD5E1;
+  word-break: break-all;
+}
+
+.rc2-context-mono {
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+  font-size: 10px;
+  color: #94A3B8;
+}
+
+/* Footer */
+.rc2-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background-color: #080B16;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  font-size: 10px;
+  color: #475569;
+}
+
+.rc2-footer-url {
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+/* Export Mode */
+.report-card-v2.export-mode {
+  width: 1080px;
+  border-radius: 28px;
+  padding: 8px;
+}
+
+.report-card-v2.export-mode .rc2-header {
+  padding: 24px 32px;
+}
+
+.report-card-v2.export-mode .rc2-brand {
+  font-size: 28px;
+}
+
+.report-card-v2.export-mode .rc2-subtitle {
+  font-size: 16px;
+}
+
+.report-card-v2.export-mode .rc2-header-right {
+  font-size: 14px;
+}
+
+.report-card-v2.export-mode .rc2-hero {
+  padding: 40px 32px;
+}
+
+.report-card-v2.export-mode .rc2-donut-wrap {
+  width: 160px;
+  height: 160px;
+}
+
+.report-card-v2.export-mode .rc2-donut {
+  width: 160px;
+  height: 160px;
+}
+
+.report-card-v2.export-mode .rc2-donut-inner {
+  width: 120px;
+  height: 120px;
+}
+
+.report-card-v2.export-mode .rc2-donut-count {
+  font-size: 32px;
+}
+
+.report-card-v2.export-mode .rc2-donut-label {
+  font-size: 14px;
+}
+
+.report-card-v2.export-mode .rc2-status-badge {
+  font-size: 32px;
+  padding: 12px 32px;
+}
+
+.report-card-v2.export-mode .rc2-section {
+  padding: 24px 32px;
+}
+
+.report-card-v2.export-mode .rc2-section-title {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.report-card-v2.export-mode .rc2-main-issue {
+  font-size: 22px;
+}
+
+.report-card-v2.export-mode .rc2-http-badge {
+  font-size: 18px;
+  padding: 8px 16px;
+  margin-top: 12px;
+}
+
+.report-card-v2.export-mode .rc2-provider-msg {
+  margin-top: 12px;
+  padding: 12px 16px;
+}
+
+.report-card-v2.export-mode .rc2-provider-msg code {
+  font-size: 14px;
+}
+
+.report-card-v2.export-mode .rc2-suggestion {
+  font-size: 18px;
+}
+
+.report-card-v2.export-mode .rc2-metrics {
+  border-top-width: 2px;
+}
+
+.report-card-v2.export-mode .rc2-metric {
+  padding: 20px 12px;
+}
+
+.report-card-v2.export-mode .rc2-metric-value {
+  font-size: 22px;
+}
+
+.report-card-v2.export-mode .rc2-metric-label {
+  font-size: 12px;
+}
+
+.report-card-v2.export-mode .rc2-checks {
+  padding: 20px 32px;
+  gap: 10px;
+}
+
+.report-card-v2.export-mode .rc2-step-pill {
+  padding: 8px 16px;
+}
+
+.report-card-v2.export-mode .rc2-dot {
+  width: 10px;
+  height: 10px;
+}
+
+.report-card-v2.export-mode .rc2-step-name {
+  font-size: 14px;
+}
+
+.report-card-v2.export-mode .rc2-context {
+  padding: 16px 32px;
+}
+
+.report-card-v2.export-mode .rc2-context-label {
+  font-size: 14px;
+  width: 100px;
+}
+
+.report-card-v2.export-mode .rc2-context-value {
+  font-size: 16px;
+}
+
+.report-card-v2.export-mode .rc2-context-mono {
+  font-size: 14px;
+}
+
+.report-card-v2.export-mode .rc2-footer {
+  padding: 16px 32px;
+  font-size: 14px;
+}
+
+.report-card-v2.export-mode .rc2-footer-url {
+  font-size: 14px;
+}
+
+/* ============================================================
    MVP — Report Card (Dark)
    ============================================================ */
 
