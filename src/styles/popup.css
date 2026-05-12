@@ -2071,6 +2071,56 @@ body {
 }
 
 /* ============================================================
+   Error Boundary
+   ============================================================ */
+
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  text-align: center;
+  background-color: var(--panel);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-md);
+  margin: 12px;
+}
+
+.error-boundary-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.error-boundary-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--error-text);
+  margin-bottom: 8px;
+}
+
+.error-boundary-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+.error-boundary-stack {
+  font-size: 10px;
+  color: var(--muted-light);
+  background-color: var(--code-bg);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-top: 12px;
+  max-width: 300px;
+  overflow-x: auto;
+  text-align: left;
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+/* ============================================================
    MVP — Report Card V2 (Dark Incident Scorecard)
    ============================================================ */
 

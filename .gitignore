@@ -9,3 +9,14 @@ build/
 !.env.example
 *.log
 .DS_Store
+node_modules/
+.output/
+dev/
+dist/
+build/
+.wxt/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
