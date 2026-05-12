@@ -31,9 +31,10 @@ import {
   copyToClipboard,
   getLanguage,
   setLanguage,
+  runBillingAnomalyProbes,
 } from '../../src/lib/storage';
 import { t, resolveLanguage, Language } from '../../src/lib/i18n';
-import type { ActiveConfig, DiagnosisReport, CostAuditConfig, CostAuditResult, TrustScore, TrustScoreCategory } from '../../src/types';
+import type { ActiveConfig, DiagnosisReport, CostAuditConfig, CostAuditResult, BillingAnomalyReport, BillingProbeResult, BalanceSnapshot } from '../../src/types';
 
 // ─── Language Context ──────────────────────────────────────
 
@@ -109,11 +110,29 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
 // ─── Trust Score Calculator ───────────────────────────────
 
-function calculateTrustScore(report: DiagnosisReport): TrustScore {
-  const categories: TrustScoreCategory[] = [];
+type TrustScoreCategoryKey = 'billing' | 'execution' | 'access' | 'compatibility' | 'speed' | 'capability';
+
+interface TrustScoreCategoryNew {
+  key: TrustScoreCategoryKey;
+  label: string;
+  labelZh: string;
+  weight: number;
+  score: number;
+  status: 'success' | 'warning' | 'error' | 'skipped';
+}
+
+interface TrustScoreNew {
+  score: number;
+  confidence: 'high' | 'medium' | 'low';
+  categories: TrustScoreCategoryNew[];
+  riskTags: string[];
+}
+
+function calculateTrustScore(report: DiagnosisReport): TrustScoreNew {
+  const categories: TrustScoreCategoryNew[] = [];
   const riskTags: string[] = [];
 
-  // Access score (weight 20)
+  // Access score (weight 15)
   const baseUrlStep = report.steps[0];
   const keyStep = report.steps[1];
   const modelsStep = report.steps[2];
@@ -156,7 +175,7 @@ function calculateTrustScore(report: DiagnosisReport): TrustScore {
     key: 'access',
     label: 'Access',
     labelZh: '访问权限',
-    weight: 20,
+    weight: 15,
     score: accessScore,
     status: accessStatus,
   });
@@ -191,41 +210,61 @@ function calculateTrustScore(report: DiagnosisReport): TrustScore {
     status: execStatus,
   });
 
-  // Cost score (weight 25)
-  let costScore = 75;
-  let costStatus: 'success' | 'warning' | 'error' | 'skipped' = 'success';
+  // Billing score (weight 35) - includes usage + anomaly probes
+  let billingScore = 80;
+  let billingStatus: 'success' | 'warning' | 'error' | 'skipped' = 'success';
+  let hasConfirmedAnomaly = false;
 
-  if (!report.usageSummary) {
-    costScore = 45;
-    costStatus = 'skipped';
+  // Check billing anomaly probes
+  const emptyProbe = report.billingAnomaly?.emptyReplyProbe;
+  const failedProbe = report.billingAnomaly?.failedRequestProbe;
+
+  if (emptyProbe?.confirmed || failedProbe?.confirmed) {
+    billingScore = 0;
+    billingStatus = 'error';
+    hasConfirmedAnomaly = true;
+    if (emptyProbe?.confirmed) {
+      riskTags.push('Empty reply charge confirmed');
+    }
+    if (failedProbe?.confirmed) {
+      riskTags.push('Failed request charge confirmed');
+    }
+  } else if (emptyProbe?.highRisk || failedProbe?.highRisk) {
+    billingScore = 40;
+    billingStatus = 'warning';
+    if (emptyProbe?.highRisk) riskTags.push('Empty reply charge high risk');
+    if (failedProbe?.highRisk) riskTags.push('Failed request charge high risk');
+  } else if (!report.usageSummary) {
+    billingScore = 45;
+    billingStatus = 'skipped';
   } else if (report.usageSummary.status === 'available') {
-    costScore = 90;
-    costStatus = 'success';
+    billingScore = 90;
+    billingStatus = 'success';
     if (report.usageSummary.totalTokens && report.usageSummary.totalTokens > 50000) {
-      costScore = 75;
-      costStatus = 'warning';
+      billingScore = 75;
+      billingStatus = 'warning';
       riskTags.push('High Token Usage');
     }
   } else if (report.usageSummary.status === 'missing') {
-    costScore = 55;
-    costStatus = 'warning';
+    billingScore = 55;
+    billingStatus = 'warning';
     riskTags.push('Usage Not Reported');
   } else if (report.usageSummary.status === 'anomaly') {
-    costScore = 35;
-    costStatus = 'error';
+    billingScore = 35;
+    billingStatus = 'error';
     riskTags.push('Usage Anomaly');
   }
 
   categories.push({
-    key: 'cost',
-    label: 'Cost',
-    labelZh: '用量核对',
-    weight: 25,
-    score: costScore,
-    status: costStatus,
+    key: 'billing',
+    label: 'Billing',
+    labelZh: '扣费核对',
+    weight: 35,
+    score: billingScore,
+    status: billingStatus,
   });
 
-  // Compatibility score (weight 15)
+  // Compatibility score (weight 10)
   let compatScore = 70;
   let compatStatus: 'success' | 'warning' | 'error' | 'skipped' = 'warning';
 
@@ -245,7 +284,7 @@ function calculateTrustScore(report: DiagnosisReport): TrustScore {
     key: 'compatibility',
     label: 'Compatibility',
     labelZh: '兼容性',
-    weight: 15,
+    weight: 10,
     score: compatScore,
     status: compatStatus,
   });
@@ -291,9 +330,14 @@ function calculateTrustScore(report: DiagnosisReport): TrustScore {
   });
 
   // Calculate total weighted score
-  const totalScore = Math.round(
+  let totalScore = Math.round(
     categories.reduce((sum, cat) => sum + cat.score * (cat.weight / 100), 0)
   );
+
+  // If billing anomaly confirmed, max score is 60
+  if (hasConfirmedAnomaly) {
+    totalScore = Math.min(totalScore, 60);
+  }
 
   // Determine confidence
   let confidence: 'high' | 'medium' | 'low' = 'medium';
@@ -302,6 +346,12 @@ function calculateTrustScore(report: DiagnosisReport): TrustScore {
     confidence = 'high';
   } else if (skippedCount >= 3) {
     confidence = 'low';
+  }
+  // If anomaly confirmed with balance data, high confidence
+  if (hasConfirmedAnomaly && report.billingAnomaly?.balanceSnapshot?.supported) {
+    confidence = 'high';
+  } else if (hasConfirmedAnomaly && !report.billingAnomaly?.balanceSnapshot?.supported) {
+    confidence = 'medium';
   }
 
   return {
@@ -389,9 +439,10 @@ function ReportCardV2({
   // Determine overall status from steps
   const hasError = report.steps.some((s) => s.status === 'error');
   const hasWarning = report.steps.some((s) => s.status === 'warning');
+  const hasBillingAnomaly = report.billingAnomaly?.emptyReplyProbe?.confirmed || report.billingAnomaly?.failedRequestProbe?.confirmed;
 
   let overallStatus: 'ready' | 'needs-attention' | 'failed';
-  if (hasError) {
+  if (hasBillingAnomaly || hasError) {
     overallStatus = 'failed';
   } else if (hasWarning) {
     overallStatus = 'needs-attention';
@@ -728,6 +779,94 @@ function ReportCardV2({
         </div>
       )}
 
+      {/* Billing Anomaly Probes */}
+      {report.billingAnomaly?.enabled && (
+        <div className="rc2-section">
+          <div className="rc2-section-title">
+            {lang === 'zh-CN' ? '扣费异常检测' : 'Billing Anomaly Probes'}
+          </div>
+          <div className="rc2-billing-probes-grid">
+            {/* Empty Reply Charge */}
+            <div className={`rc2-probe-card ${report.billingAnomaly.emptyReplyProbe?.confirmed ? 'probe-confirmed' : report.billingAnomaly.emptyReplyProbe?.highRisk ? 'probe-risk' : report.billingAnomaly.emptyReplyProbe?.status || 'skipped'}`}>
+              <div className="rc2-probe-title">
+                {lang === 'zh-CN' ? '空回复扣费' : 'Empty Reply Charge'}
+              </div>
+              <div className="rc2-probe-status">
+                {report.billingAnomaly.emptyReplyProbe?.confirmed
+                  ? (lang === 'zh-CN' ? '已确认' : 'Confirmed')
+                  : report.billingAnomaly.emptyReplyProbe?.highRisk
+                  ? (lang === 'zh-CN' ? '高风险' : 'High Risk')
+                  : report.billingAnomaly.emptyReplyProbe?.status === 'success'
+                  ? (lang === 'zh-CN' ? '未发现' : 'Not Found')
+                  : report.billingAnomaly.emptyReplyProbe?.status === 'warning'
+                  ? (lang === 'zh-CN' ? '需要复查' : 'Review')
+                  : (lang === 'zh-CN' ? '跳过' : 'Skipped')}
+              </div>
+              {report.billingAnomaly.emptyReplyProbe?.visibleOutputLength !== undefined && (
+                <div className="rc2-probe-detail">
+                  {lang === 'zh-CN' ? '输出长度' : 'Output'}: {report.billingAnomaly.emptyReplyProbe.visibleOutputLength}
+                </div>
+              )}
+              {report.billingAnomaly.emptyReplyProbe?.balanceDelta !== undefined && (
+                <div className="rc2-probe-detail">
+                  {lang === 'zh-CN' ? '余额差异' : 'Delta'}: {report.billingAnomaly.emptyReplyProbe.balanceDelta >= 0 ? '+' : ''}{report.billingAnomaly.emptyReplyProbe.balanceDelta.toFixed(4)}
+                </div>
+              )}
+            </div>
+
+            {/* Failed Request Charge */}
+            <div className={`rc2-probe-card ${report.billingAnomaly.failedRequestProbe?.confirmed ? 'probe-confirmed' : report.billingAnomaly.failedRequestProbe?.highRisk ? 'probe-risk' : report.billingAnomaly.failedRequestProbe?.status || 'skipped'}`}>
+              <div className="rc2-probe-title">
+                {lang === 'zh-CN' ? '失败请求扣费' : 'Failed Request Charge'}
+              </div>
+              <div className="rc2-probe-status">
+                {report.billingAnomaly.failedRequestProbe?.confirmed
+                  ? (lang === 'zh-CN' ? '已确认' : 'Confirmed')
+                  : report.billingAnomaly.failedRequestProbe?.highRisk
+                  ? (lang === 'zh-CN' ? '高风险' : 'High Risk')
+                  : report.billingAnomaly.failedRequestProbe?.status === 'success'
+                  ? (lang === 'zh-CN' ? '未发现' : 'Not Found')
+                  : report.billingAnomaly.failedRequestProbe?.status === 'warning'
+                  ? (lang === 'zh-CN' ? '需要复查' : 'Review')
+                  : (lang === 'zh-CN' ? '跳过' : 'Skipped')}
+              </div>
+              {report.billingAnomaly.failedRequestProbe?.httpStatus && (
+                <div className="rc2-probe-detail">
+                  HTTP: {report.billingAnomaly.failedRequestProbe.httpStatus}
+                </div>
+              )}
+              {report.billingAnomaly.failedRequestProbe?.balanceDelta !== undefined && (
+                <div className="rc2-probe-detail">
+                  {lang === 'zh-CN' ? '余额差异' : 'Delta'}: {report.billingAnomaly.failedRequestProbe.balanceDelta >= 0 ? '+' : ''}{report.billingAnomaly.failedRequestProbe.balanceDelta.toFixed(4)}
+                </div>
+              )}
+            </div>
+
+            {/* Balance Snapshot */}
+            <div className={`rc2-probe-card ${report.billingAnomaly.balanceSnapshot?.supported ? 'probe-success' : 'probe-skipped'}`}>
+              <div className="rc2-probe-title">
+                {lang === 'zh-CN' ? '余额读取' : 'Balance Read'}
+              </div>
+              <div className="rc2-probe-status">
+                {report.billingAnomaly.balanceSnapshot?.supported
+                  ? (lang === 'zh-CN' ? '可用' : 'Available')
+                  : (lang === 'zh-CN' ? '不可用' : 'Not Available')}
+              </div>
+              {report.billingAnomaly.balanceSnapshot?.available !== undefined && (
+                <div className="rc2-probe-detail">
+                  {lang === 'zh-CN' ? '余额' : 'Balance'}: {report.billingAnomaly.balanceSnapshot.available.toFixed(4)}
+                </div>
+              )}
+              {report.billingAnomaly.balanceSnapshot?.source && (
+                <div className="rc2-probe-detail">
+                  {lang === 'zh-CN' ? '来源' : 'Source'}: {report.billingAnomaly.balanceSnapshot.source}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <div className="rc2-footer">
         <span>{lang === 'zh-CN' ? '由 AI API Doctor 生成' : 'Generated by AI API Doctor'}</span>
@@ -758,6 +897,8 @@ function HomePage() {
   const [showGuide, setShowGuide] = useState(true);
   const [showExample, setShowExample] = useState(false);
   const [showCostAudit, setShowCostAudit] = useState(false);
+  const [showBillingAnomaly, setShowBillingAnomaly] = useState(false);
+  const [billingAnomalyEnabled, setBillingAnomalyEnabled] = useState(false);
   const [costAuditInput, setCostAuditInput] = useState({
     inputPricePerM: '',
     outputPricePerM: '',
@@ -830,6 +971,24 @@ function HomePage() {
       const next = { ...config, updatedAt: new Date().toISOString() };
       await saveActiveConfig(next);
       const rep = await runDiagnosis(next);
+
+      // Run billing anomaly probes if enabled
+      if (billingAnomalyEnabled && next.baseUrl && next.apiKey) {
+        try {
+          const probesResult = await runBillingAnomalyProbes(
+            next.baseUrl,
+            next.apiKey,
+            next.modelId || '',
+            true,
+            costAuditInput.beforeBalance ? parseFloat(costAuditInput.beforeBalance) : undefined,
+            costAuditInput.afterBalance ? parseFloat(costAuditInput.afterBalance) : undefined
+          );
+          rep.billingAnomaly = probesResult;
+        } catch (probeErr) {
+          console.error('Billing anomaly probe error:', probeErr);
+        }
+      }
+
       setReport(rep);
       setConfig(next);
 
@@ -846,7 +1005,7 @@ function HomePage() {
     } finally {
       setRunning(false);
     }
-  }, [config]);
+  }, [config, billingAnomalyEnabled, costAuditInput]);
 
   const handleUseExample = useCallback(() => {
     setConfig({
@@ -920,6 +1079,36 @@ function HomePage() {
         lines.push('');
       }
 
+      // Billing Anomaly Probes
+      if (report.billingAnomaly?.enabled) {
+        lines.push('**Billing Anomaly Probes:**');
+        lines.push('');
+
+        if (report.billingAnomaly.emptyReplyProbe) {
+          lines.push('### Empty Reply Charge');
+          lines.push(`- **Status:** ${report.billingAnomaly.emptyReplyProbe.status}`);
+          if (report.billingAnomaly.emptyReplyProbe.httpStatus) lines.push(`- **HTTP Status:** ${report.billingAnomaly.emptyReplyProbe.httpStatus}`);
+          lines.push(`- **Visible Output Length:** ${report.billingAnomaly.emptyReplyProbe.visibleOutputLength}`);
+          if (report.billingAnomaly.emptyReplyProbe.completionTokens !== undefined) lines.push(`- **completion_tokens:** ${report.billingAnomaly.emptyReplyProbe.completionTokens}`);
+          if (report.billingAnomaly.emptyReplyProbe.totalTokens !== undefined) lines.push(`- **total_tokens:** ${report.billingAnomaly.emptyReplyProbe.totalTokens}`);
+          if (report.billingAnomaly.emptyReplyProbe.balanceDelta !== undefined) lines.push(`- **Balance Delta:** ${report.billingAnomaly.emptyReplyProbe.balanceDelta >= 0 ? '+' : ''}${report.billingAnomaly.emptyReplyProbe.balanceDelta.toFixed(4)}`);
+          lines.push(`- **Result:** ${report.billingAnomaly.emptyReplyProbe.message}`);
+          lines.push('');
+        }
+
+        if (report.billingAnomaly.failedRequestProbe) {
+          lines.push('### Failed Request Charge');
+          lines.push(`- **Status:** ${report.billingAnomaly.failedRequestProbe.status}`);
+          if (report.billingAnomaly.failedRequestProbe.httpStatus) lines.push(`- **HTTP Status:** ${report.billingAnomaly.failedRequestProbe.httpStatus}`);
+          if (report.billingAnomaly.failedRequestProbe.balanceDelta !== undefined) lines.push(`- **Balance Delta:** ${report.billingAnomaly.failedRequestProbe.balanceDelta >= 0 ? '+' : ''}${report.billingAnomaly.failedRequestProbe.balanceDelta.toFixed(4)}`);
+          lines.push(`- **Result:** ${report.billingAnomaly.failedRequestProbe.message}`);
+          lines.push('');
+        }
+
+        lines.push('*This report only shows reproducible signals and does not prove intentional overbilling.*');
+        lines.push('');
+      }
+
       if (report.usageSummary?.status === 'available' || report.usageSummary?.status === 'anomaly') {
         lines.push('**Usage:**');
         if (report.usageSummary.totalTokens !== undefined) lines.push(`- \`total_tokens: ${report.usageSummary.totalTokens}\``);
@@ -965,6 +1154,24 @@ function HomePage() {
           if (main.suggestion) lines.push(`- 建议：${main.suggestion.replace(/\n/g, ' ')}`);
           lines.push('');
         }
+        if (report.billingAnomaly?.enabled) {
+          lines.push('### 扣费异常检测');
+          if (report.billingAnomaly.emptyReplyProbe) {
+            lines.push(`- 空回复扣费：${report.billingAnomaly.emptyReplyProbe.status}`);
+            if (report.billingAnomaly.emptyReplyProbe.balanceDelta !== undefined) {
+              lines.push(`  余额差异：${report.billingAnomaly.emptyReplyProbe.balanceDelta >= 0 ? '+' : ''}${report.billingAnomaly.emptyReplyProbe.balanceDelta.toFixed(4)}`);
+            }
+          }
+          if (report.billingAnomaly.failedRequestProbe) {
+            lines.push(`- 失败请求扣费：${report.billingAnomaly.failedRequestProbe.status}`);
+            if (report.billingAnomaly.failedRequestProbe.balanceDelta !== undefined) {
+              lines.push(`  余额差异：${report.billingAnomaly.failedRequestProbe.balanceDelta >= 0 ? '+' : ''}${report.billingAnomaly.failedRequestProbe.balanceDelta.toFixed(4)}`);
+            }
+          }
+          lines.push('');
+          lines.push('本报告只展示可复现信号，不证明服务商故意多扣费。');
+          lines.push('');
+        }
         lines.push('### 安全说明');
         lines.push('API Key 已脱敏，不包含完整 Key。');
       } else {
@@ -990,6 +1197,24 @@ function HomePage() {
           if (main.httpStatus) lines.push(`- HTTP Status: ${main.httpStatus}`);
           if (main.providerMessage) lines.push(`- Provider Message: ${main.providerMessage}`);
           if (main.suggestion) lines.push(`- Suggestion: ${main.suggestion.replace(/\n/g, ' ')}`);
+          lines.push('');
+        }
+        if (report.billingAnomaly?.enabled) {
+          lines.push('### Billing Anomaly Probes');
+          if (report.billingAnomaly.emptyReplyProbe) {
+            lines.push(`- Empty Reply Charge: ${report.billingAnomaly.emptyReplyProbe.status}`);
+            if (report.billingAnomaly.emptyReplyProbe.balanceDelta !== undefined) {
+              lines.push(`  Balance Delta: ${report.billingAnomaly.emptyReplyProbe.balanceDelta >= 0 ? '+' : ''}${report.billingAnomaly.emptyReplyProbe.balanceDelta.toFixed(4)}`);
+            }
+          }
+          if (report.billingAnomaly.failedRequestProbe) {
+            lines.push(`- Failed Request Charge: ${report.billingAnomaly.failedRequestProbe.status}`);
+            if (report.billingAnomaly.failedRequestProbe.balanceDelta !== undefined) {
+              lines.push(`  Balance Delta: ${report.billingAnomaly.failedRequestProbe.balanceDelta >= 0 ? '+' : ''}${report.billingAnomaly.failedRequestProbe.balanceDelta.toFixed(4)}`);
+            }
+          }
+          lines.push('');
+          lines.push('This report only shows reproducible signals and does not prove intentional overbilling.');
           lines.push('');
         }
         lines.push('### Safety');
@@ -1266,6 +1491,46 @@ function HomePage() {
                 </select>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Billing Anomaly Probes Section */}
+      <div className="cost-audit-section">
+        <button
+          className="cost-audit-toggle"
+          onClick={() => setShowBillingAnomaly(!showBillingAnomaly)}
+        >
+          <span>{lang === 'zh-CN' ? '扣费异常检测' : 'Billing Anomaly Probes'}</span>
+          {showBillingAnomaly ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+        {showBillingAnomaly && (
+          <div className="cost-audit-body">
+            <div className="cost-audit-hint">
+              {lang === 'zh-CN'
+                ? '该检测会发送 2-3 次低成本真实请求，用于核对空回复和失败请求是否产生余额扣减。结果仅用于复查，不证明服务商故意多扣费。'
+                : 'This sends 2-3 low-cost real requests to check whether empty replies or failed requests reduce your balance. Results are for review only and do not prove intentional overbilling.'}
+            </div>
+            <div className="cost-audit-toggle-row">
+              <label className="cost-audit-switch-label">
+                <input
+                  type="checkbox"
+                  checked={billingAnomalyEnabled}
+                  onChange={(e) => setBillingAnomalyEnabled(e.target.checked)}
+                />
+                <span className="cost-audit-switch" />
+                <span>
+                  {lang === 'zh-CN' ? '启用空回复 / 失败请求扣费检测' : 'Enable empty reply / failed request charge probes'}
+                </span>
+              </label>
+            </div>
+            {billingAnomalyEnabled && !config.modelId && (
+              <div className="cost-audit-warning">
+                {lang === 'zh-CN'
+                  ? '注意：需要先选择一个模型才能运行空回复检测'
+                  : 'Note: Select a model first to run empty reply probe'}
+              </div>
+            )}
           </div>
         )}
       </div>

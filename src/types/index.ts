@@ -147,6 +147,7 @@ export interface DiagnosisReport {
   totalCount: number;
   steps: DiagnosisStepResult[];
   usageSummary?: DiagnosisUsageSummary;
+  billingAnomaly?: BillingAnomalyReport;
 }
 
 export type TrustScoreCategoryKey = 'execution' | 'cost' | 'access' | 'compatibility' | 'speed' | 'capability';
@@ -174,6 +175,53 @@ export interface CostAuditResult {
   effectivePricePerM?: number;
   currency: CostAuditCurrency;
   status: 'ok' | 'review' | 'high-diff' | 'unavailable';
+}
+
+// ─── Billing Anomaly Probes ────────────────────────────────
+
+export type BalanceSnapshotSource = 'newapi' | 'manual' | 'unsupported';
+
+export interface BalanceSnapshot {
+  supported: boolean;
+  source: BalanceSnapshotSource;
+  granted?: number;
+  used?: number;
+  available?: number;
+  raw?: unknown;
+  error?: string;
+}
+
+export type BillingProbeKey = 'empty_reply_charge' | 'failed_request_charge';
+
+export interface BillingProbeResult {
+  key: BillingProbeKey;
+  title: string;
+  status: DiagnosisStatus;
+  confirmed: boolean;
+  highRisk: boolean;
+  httpStatus?: number;
+  requestId?: string;
+  streamStatus?: 'done' | 'eof' | 'error' | 'aborted' | 'unknown';
+  visibleOutputLength: number;
+  completionTokens?: number;
+  promptTokens?: number;
+  totalTokens?: number;
+  hasToolCall: boolean;
+  hasImage: boolean;
+  hasAudio: boolean;
+  hasSearch: boolean;
+  beforeBalance?: number;
+  afterBalance?: number;
+  balanceDelta?: number;
+  message: string;
+  suggestion: string;
+}
+
+export interface BillingAnomalyReport {
+  enabled: boolean;
+  balanceSnapshot?: BalanceSnapshot;
+  emptyReplyProbe?: BillingProbeResult;
+  failedRequestProbe?: BillingProbeResult;
 }
 
 // ─── Legacy / Compatibility ────────────────────────────────

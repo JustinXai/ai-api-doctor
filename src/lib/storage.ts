@@ -21,6 +21,9 @@ import {
   DiagnosisUsage,
   DiagnosisUsageSummary,
   ApiErrorType,
+  BalanceSnapshot,
+  BillingProbeResult,
+  BillingAnomalyReport,
 } from '../types';
 import { DEFAULT_SETTINGS, EXAMPLE_PROVIDER } from './defaults';
 import { ensureHostPermission } from './permissions';
@@ -868,4 +871,414 @@ function buildReport(
     steps,
     usageSummary,
   };
+}
+
+// ─── Billing Anomaly Probes ─────────────────────────────────
+
+import type { BalanceSnapshot, BillingProbeResult, BillingProbeKey, BillingAnomalyReport } from '../types';
+
+export async function getNewApiTokenUsage(
+  baseUrl: string,
+  apiKey: string
+): Promise<BalanceSnapshot> {
+  try {
+    // Derive origin from baseUrl
+    const url = new URL(baseUrl);
+    const origin = url.origin;
+    const usageUrl = `${origin}/api/usage/token`;
+
+    const response = await fetch(usageUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        supported: false,
+        source: 'unsupported',
+        error: `HTTP ${response.status}`,
+      };
+    }
+
+    const text = await response.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return {
+        supported: false,
+        source: 'unsupported',
+        error: 'Non-JSON response',
+      };
+    }
+
+    return {
+      supported: true,
+      source: 'newapi',
+      granted: typeof data['granted'] === 'number' ? (data['granted'] as number) : undefined,
+      used: typeof data['used'] === 'number' ? (data['used'] as number) : undefined,
+      available: typeof data['available'] === 'number' ? (data['available'] as number) : undefined,
+      raw: data,
+    };
+  } catch (err) {
+    return {
+      supported: false,
+      source: 'unsupported',
+      error: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
+export async function runBillingAnomalyProbes(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string,
+  enabled: boolean,
+  manualBeforeBalance?: number,
+  manualAfterBalance?: number
+): Promise<BillingAnomalyReport> {
+  const report: BillingAnomalyReport = { enabled };
+
+  if (!enabled) {
+    return report;
+  }
+
+  // Get balance snapshot
+  const newApiSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
+  const balanceSnapshot: BalanceSnapshot = {
+    supported: newApiSnapshot.supported,
+    source: newApiSnapshot.source,
+    granted: newApiSnapshot.granted,
+    used: newApiSnapshot.used,
+    available: newApiSnapshot.available,
+    raw: newApiSnapshot.raw,
+    error: newApiSnapshot.error,
+  };
+  report.balanceSnapshot = balanceSnapshot;
+
+  // Get before balance (prefer newapi, fallback to manual)
+  const beforeBalance = balanceSnapshot.available ?? manualBeforeBalance;
+  const afterBalanceManual = manualAfterBalance;
+
+  // Run empty reply probe
+  report.emptyReplyProbe = await runEmptyReplyProbe(baseUrl, apiKey, modelId, beforeBalance);
+
+  // Run failed request probe
+  report.failedRequestProbe = await runFailedRequestProbe(baseUrl, apiKey, beforeBalance);
+
+  return report;
+}
+
+async function runEmptyReplyProbe(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string,
+  beforeBalance?: number
+): Promise<BillingProbeResult> {
+  const result: BillingProbeResult = {
+    key: 'empty_reply_charge',
+    title: 'Empty Reply Charge',
+    status: 'skipped',
+    confirmed: false,
+    highRisk: false,
+    visibleOutputLength: 0,
+    hasToolCall: false,
+    hasImage: false,
+    hasAudio: false,
+    hasSearch: false,
+    message: 'Skipped',
+    suggestion: '',
+  };
+
+  if (!modelId) {
+    result.message = 'No model selected';
+    result.suggestion = 'Select a model to run empty reply probe';
+    return result;
+  }
+
+  const timestamp = Date.now();
+  let afterBalance: number | undefined;
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: 'user', content: '只回复一个字：1' }],
+        max_tokens: 5,
+        temperature: 0,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+
+    result.httpStatus = response.status;
+
+    // Try to get after balance
+    const afterSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
+    afterBalance = afterSnapshot.available;
+    result.afterBalance = afterBalance;
+    result.beforeBalance = beforeBalance;
+    if (beforeBalance !== undefined && afterBalance !== undefined) {
+      result.balanceDelta = beforeBalance - afterBalance;
+    }
+
+    if (!response.ok) {
+      result.status = 'warning';
+      result.message = `HTTP ${response.status}`;
+      result.suggestion = 'Request failed but balance check may indicate charge';
+      return result;
+    }
+
+    // Read stream
+    const text = await response.text();
+    result.streamStatus = 'unknown';
+
+    // Parse SSE stream
+    const streamData = parseSSEStream(text);
+    let visibleOutputLength = 0;
+    let completionTokens: number | undefined;
+    let promptTokens: number | undefined;
+    let totalTokens: number | undefined;
+    let hasToolCall = false;
+    let hasImage = false;
+    let hasAudio = false;
+    let hasSearch = false;
+
+    for (const event of streamData) {
+      if (event['error']) {
+        result.status = 'error';
+        result.message = String(event['error']);
+        result.suggestion = 'Stream returned error';
+        return result;
+      }
+
+      const choices = event['choices'];
+      if (choices && Array.isArray(choices)) {
+        for (const choice of choices) {
+          const delta = choice['delta'];
+          if (delta) {
+            // Count visible text
+            const content = delta['content'];
+            if (typeof content === 'string' && content.length > 0) {
+              visibleOutputLength += content.length;
+            }
+
+            // Check for tool calls
+            const toolCalls = delta['tool_calls'];
+            if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+              hasToolCall = true;
+            }
+
+            // Check for other modalities
+            if (delta['audio']) hasAudio = true;
+            if (delta['image_url']) hasImage = true;
+            if (delta['search_results']) hasSearch = true;
+          }
+
+          // Check finish reason
+          const finishReason = choice['finish_reason'];
+          if (finishReason === 'stop' || finishReason === 'eos') {
+            result.streamStatus = 'done';
+          }
+        }
+      }
+
+      // Check usage in stream
+      const usage = event['usage'];
+      if (usage) {
+        completionTokens = typeof usage['completion_tokens'] === 'number' ? (usage['completion_tokens'] as number) : undefined;
+        promptTokens = typeof usage['prompt_tokens'] === 'number' ? (usage['prompt_tokens'] as number) : undefined;
+        totalTokens = typeof usage['total_tokens'] === 'number' ? (usage['total_tokens'] as number) : undefined;
+      }
+    }
+
+    result.visibleOutputLength = visibleOutputLength;
+    result.completionTokens = completionTokens;
+    result.promptTokens = promptTokens;
+    result.totalTokens = totalTokens;
+    result.hasToolCall = hasToolCall;
+    result.hasImage = hasImage;
+    result.hasAudio = hasAudio;
+    result.hasSearch = hasSearch;
+
+    // Determine if empty reply risk
+    const isEmptyReply = visibleOutputLength === 0 && !hasToolCall && !hasImage && !hasAudio && !hasSearch;
+    const isZeroCompletion = completionTokens === 0 || completionTokens === undefined;
+
+    if (isEmptyReply) {
+      if (result.balanceDelta !== undefined && result.balanceDelta > 0) {
+        result.status = 'error';
+        result.confirmed = true;
+        result.highRisk = true;
+        result.message = 'Empty reply with balance deduction detected';
+        result.suggestion = 'Balance decreased despite no visible output';
+      } else if (result.balanceDelta !== undefined) {
+        result.status = 'success';
+        result.message = 'Empty reply but no balance deduction';
+        result.suggestion = 'No charge detected for empty reply';
+      } else {
+        result.status = 'warning';
+        result.highRisk = true;
+        result.message = 'Empty reply detected but balance not available';
+        result.suggestion = 'Balance check unavailable, compare with dashboard';
+      }
+    } else {
+      result.status = 'success';
+      result.message = 'Normal response with visible output';
+      result.suggestion = 'Response appears normal';
+    }
+
+    if (result.streamStatus === 'unknown' && visibleOutputLength > 0) {
+      result.streamStatus = 'eof';
+    }
+
+  } catch (err) {
+    result.status = 'error';
+    result.message = err instanceof Error ? err.message : 'Unknown error';
+    result.suggestion = 'Probe failed to complete';
+  }
+
+  return result;
+}
+
+async function runFailedRequestProbe(
+  baseUrl: string,
+  apiKey: string,
+  beforeBalance?: number
+): Promise<BillingProbeResult> {
+  const result: BillingProbeResult = {
+    key: 'failed_request_charge',
+    title: 'Failed Request Charge',
+    status: 'skipped',
+    confirmed: false,
+    highRisk: false,
+    visibleOutputLength: 0,
+    hasToolCall: false,
+    hasImage: false,
+    hasAudio: false,
+    hasSearch: false,
+    message: 'Skipped',
+    suggestion: '',
+  };
+
+  const invalidModel = `ai-api-doctor-invalid-model-${Date.now()}`;
+
+  try {
+    // Get before balance
+    const beforeSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
+    const beforeBal = beforeSnapshot.available ?? beforeBalance;
+    result.beforeBalance = beforeBal;
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: invalidModel,
+        messages: [{ role: 'user', content: 'Reply exactly: 1' }],
+        max_tokens: 5,
+        temperature: 0,
+        stream: false,
+      }),
+    });
+
+    result.httpStatus = response.status;
+
+    // Get after balance
+    const afterSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
+    const afterBal = afterSnapshot.available;
+    result.afterBalance = afterBal;
+    if (beforeBal !== undefined && afterBal !== undefined) {
+      result.balanceDelta = beforeBal - afterBal;
+    }
+
+    // Try to read response
+    let responseText = '';
+    try {
+      responseText = await response.text();
+      const json = JSON.parse(responseText);
+      if (json?.error) {
+        result.message = String(json.error);
+      }
+    } catch {
+      // Non-JSON or empty
+    }
+
+    // Determine if failed request without charge
+    const isFailedRequest = !response.ok || responseText.includes('error') || responseText.includes('not found') || responseText.includes('invalid');
+
+    if (isFailedRequest) {
+      if (result.balanceDelta !== undefined && result.balanceDelta > 0) {
+        result.status = 'error';
+        result.confirmed = true;
+        result.highRisk = true;
+        result.message = 'Failed request with balance deduction detected';
+        result.suggestion = 'Balance decreased despite request failure';
+      } else if (result.balanceDelta !== undefined) {
+        result.status = 'success';
+        result.message = `Failed request (HTTP ${response.status}) but no balance deduction`;
+        result.suggestion = 'No charge detected for failed request';
+      } else {
+        result.status = 'warning';
+        result.highRisk = true;
+        result.message = `Failed request (HTTP ${response.status}) but balance not available`;
+        result.suggestion = 'Balance check unavailable, compare with dashboard';
+      }
+    } else {
+      result.status = 'success';
+      result.message = 'Request completed';
+      result.suggestion = 'Request appears to have succeeded';
+    }
+
+  } catch (err) {
+    result.status = 'error';
+    result.message = err instanceof Error ? err.message : 'Unknown error';
+    result.suggestion = 'Probe failed to complete';
+  }
+
+  return result;
+}
+
+function parseSSEStream(text: string): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = [];
+  const lines = text.split('\n');
+
+  let currentEvent: Record<string, unknown> = {};
+
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') {
+        events.push(currentEvent);
+        currentEvent = {};
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(data);
+        events.push(parsed);
+      } catch {
+        // Skip invalid JSON
+      }
+    } else if (line.startsWith('event: ')) {
+      const eventName = line.slice(7).trim();
+      currentEvent = { _event: eventName };
+    } else if (line.trim() === '') {
+      if (Object.keys(currentEvent).length > 0) {
+        events.push(currentEvent);
+        currentEvent = {};
+      }
+    }
+  }
+
+  return events;
 }
