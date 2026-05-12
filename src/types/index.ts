@@ -1,3 +1,18 @@
+// ─── Active Config (MVP single-config model) ──────────────
+
+export type ConfigSource = 'custom' | 'example' | 'newapi';
+
+export interface ActiveConfig {
+  providerName: string;
+  baseUrl: string;
+  apiKey: string;
+  modelId?: string;
+  source?: ConfigSource;
+  updatedAt: string;
+}
+
+// ─── Provider / Key (legacy — kept for migration compatibility) ─
+
 export interface Provider {
   id: string;
   name: string;
@@ -35,50 +50,43 @@ export type DiagnosisStepId =
   | 'usage_audit';
 
 export type ApiErrorType =
-  // ── Network ──────────────────────────────────────────────
-  | 'NETWORK_ERROR'           // fetch threw: DNS, timeout, CORS, no internet
-  | 'SSL_ERROR'               // SSL certificate problem
-  | 'CORS_ERROR'              // blocked by CORS / host permission
-  | 'HOST_UNREACHABLE'        // domain not reachable
-  // ── HTTP Status ─────────────────────────────────────────
-  | 'HTTP_400'               // Bad request
-  | 'HTTP_401'               // API key invalid or missing
-  | 'HTTP_402'               // Payment required / balance insufficient
-  | 'HTTP_403'               // Generic forbidden
-  | 'HTTP_404'               // Endpoint not found (wrong URL)
-  | 'HTTP_408'               // Request timeout
-  | 'HTTP_429'               // Rate limited
-  | 'HTTP_5XX'               // Server error
-  // ── Response Type ────────────────────────────────────────
-  | 'NON_JSON_RESPONSE'       // Server returned HTML / non-JSON
-  | 'HTML_RESPONSE'            // Server returned HTML (maybe a login page / 404 page)
-  | 'CLOUDFLARE_BLOCK'        // Cloudflare challenged the request
-  | 'LOGIN_PAGE'              // Redirected to a login page
-  // ── Key / Auth ─────────────────────────────────────────
-  | 'KEY_EMPTY'               // No API key provided
-  | 'KEY_EXPIRED'             // Key has expired
-  | 'KEY_DISABLED'            // Key has been disabled
-  | 'KEY_WRONG_HOST'          // Key belongs to a different site
-  | 'KEY_NO_BALANCE'          // Key has no balance / quota exhausted
-  | 'KEY_NO_PERMISSION'        // Key lacks group / model permission
-  | 'KEY_IP_RESTRICTED'        // Key is restricted to specific IPs
-  | 'KEY_CONCURRENCY_LIMITED'  // Key has hit concurrency limit
-  // ── Model / Group ───────────────────────────────────────
-  | 'MODEL_NOT_SELECTED'       // No model selected for diagnosis
-  | 'MODEL_NOT_FOUND'          // Model ID not found on this provider
-  | 'MODEL_ALIAS_NOT_CONFIGURED' // Model alias not set up
-  | 'MODEL_NOT_IN_GROUP'       // Model not in this key's group
-  | 'GROUP_NO_MODEL'           // Key's group doesn't include this model
-  | 'CHANNEL_UNAVAILABLE'       // Model's bound channel is down
-  | 'MODEL_UNSUPPORTED'         // /v1/models not supported (but chat may still work)
-  | 'MODELS_ENDPOINT_403'      // /v1/models returns 403
-  // ── Usage / Billing ─────────────────────────────────────
-  | 'USAGE_MISSING'            // No usage data in response
-  | 'USAGE_ANOMALY_HIGH'       // total_tokens unusually high
-  | 'USAGE_ANOMALY_COMPLETION' // completion_tokens >> max_tokens
-  | 'USAGE_DEDUCTION_SUSPECTED' // Request failed but may have been charged
-  | 'USAGE_BALANCE_MISMATCH'   // Balance change doesn't match usage
-  // ── Misc ────────────────────────────────────────────────
+  | 'NETWORK_ERROR'
+  | 'SSL_ERROR'
+  | 'CORS_ERROR'
+  | 'HOST_UNREACHABLE'
+  | 'HTTP_400'
+  | 'HTTP_401'
+  | 'HTTP_402'
+  | 'HTTP_403'
+  | 'HTTP_404'
+  | 'HTTP_408'
+  | 'HTTP_429'
+  | 'HTTP_5XX'
+  | 'NON_JSON_RESPONSE'
+  | 'HTML_RESPONSE'
+  | 'CLOUDFLARE_BLOCK'
+  | 'LOGIN_PAGE'
+  | 'KEY_EMPTY'
+  | 'KEY_EXPIRED'
+  | 'KEY_DISABLED'
+  | 'KEY_WRONG_HOST'
+  | 'KEY_NO_BALANCE'
+  | 'KEY_NO_PERMISSION'
+  | 'KEY_IP_RESTRICTED'
+  | 'KEY_CONCURRENCY_LIMITED'
+  | 'MODEL_NOT_SELECTED'
+  | 'MODEL_NOT_FOUND'
+  | 'MODEL_ALIAS_NOT_CONFIGURED'
+  | 'MODEL_NOT_IN_GROUP'
+  | 'GROUP_NO_MODEL'
+  | 'CHANNEL_UNAVAILABLE'
+  | 'MODEL_UNSUPPORTED'
+  | 'MODELS_ENDPOINT_403'
+  | 'USAGE_MISSING'
+  | 'USAGE_ANOMALY_HIGH'
+  | 'USAGE_ANOMALY_COMPLETION'
+  | 'USAGE_DEDUCTION_SUSPECTED'
+  | 'USAGE_BALANCE_MISMATCH'
   | 'UNKNOWN_ERROR';
 
 export interface DiagnosisUsage {
@@ -139,6 +147,7 @@ export type ApiErrorCode =
   | 'NON_JSON_RESPONSE'
   | 'MODELS_UNSUPPORTED'
   | 'MODEL_ACCESS_DENIED'
+  | 'HOST_PERMISSION_DENIED'
   | 'UNKNOWN_ERROR';
 
 export interface ApiError {

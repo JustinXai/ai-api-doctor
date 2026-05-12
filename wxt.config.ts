@@ -9,5 +9,6 @@ export default defineConfig({
     default_locale: 'en',
     permissions: ['storage', 'clipboardWrite'],
     host_permissions: ['https://api1.link-ai.cc/*'],
+    optional_host_permissions: ['https://*/*', 'http://*/*'],
   },
 });

@@ -1842,3 +1842,551 @@ body {
   color: #2563eb;
   border: 1px solid #bfdbfe;
 }
+
+/* ============================================================
+   MVP — Config Form
+   ============================================================ */
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  padding-bottom: 2px;
+}
+
+.config-section {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.form-label-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.form-label-tag.optional {
+  background-color: var(--panel-2);
+  color: var(--muted-light);
+  border: 1px solid var(--border);
+}
+
+.form-label-tag.required {
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border: 1px solid var(--error-border);
+}
+
+.form-label-tag.recommended {
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.form-input,
+.form-textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  background-color: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  padding: 0 10px;
+}
+
+.form-input {
+  height: 34px;
+}
+
+.form-textarea {
+  padding: 8px 10px;
+  resize: none;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.form-input:focus,
+.form-textarea:focus {
+  outline: none;
+  border-color: var(--text);
+  box-shadow: var(--shadow-input-focus);
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: var(--muted-light);
+}
+
+.form-input[type="password"] {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.form-hint {
+  font-size: 9px;
+  color: var(--muted-light);
+  line-height: 1.4;
+}
+
+.parse-hint {
+  font-size: 10px;
+  color: var(--success-text);
+  background-color: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  line-height: 1.4;
+}
+
+.parse-error {
+  font-size: 10px;
+  color: var(--error-text);
+  background-color: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  line-height: 1.4;
+}
+
+/* ============================================================
+   MVP — Example Provider Strip
+   ============================================================ */
+
+.example-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background-color: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.example-strip-text {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+  flex: 1;
+}
+
+.example-strip-text strong {
+  color: var(--text);
+}
+
+.example-footnote {
+  font-size: 9px;
+  color: var(--muted-light);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.btn-sm {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+/* ============================================================
+   MVP — Guide Section
+   ============================================================ */
+
+.guide-section {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.guide-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: none;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.12s;
+  letter-spacing: 0.01em;
+}
+
+.guide-toggle:hover {
+  background-color: var(--code-bg);
+}
+
+.guide-body {
+  padding: 8px 12px 10px;
+}
+
+.guide-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guide-list li {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ============================================================
+   MVP — Report Card (Dark)
+   ============================================================ */
+
+.report-card {
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.report-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1e293b;
+  background-color: #1e293b;
+}
+
+.report-brand {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: -0.01em;
+}
+
+.report-sub {
+  font-size: 10px;
+  color: #64748b;
+  font-family: var(--font-mono);
+}
+
+.report-card-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.report-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.report-label {
+  font-size: 10px;
+  color: #64748b;
+  width: 68px;
+  flex-shrink: 0;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.report-value {
+  font-size: 11px;
+  color: #e2e8f0;
+  flex: 1;
+  word-break: break-all;
+}
+
+.report-mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.card-ok { color: #4ade80; }
+.card-warn { color: #fbbf24; }
+.card-fail { color: #f87171; }
+
+.report-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-top: 1px solid #1e293b;
+  background-color: #0f172a;
+}
+
+.report-footer {
+  font-size: 10px;
+  color: #475569;
+}
+
+.report-url {
+  font-size: 10px;
+  color: #475569;
+  font-family: var(--font-mono);
+}
+
+.report-actions {
+  display: flex;
+  gap: 5px;
+  padding: 8px 12px;
+  border-top: 1px solid #1e293b;
+  background-color: #0f172a;
+}
+
+.report-btn {
+  flex: 1;
+  height: 30px;
+  border: 1px solid #334155;
+  border-radius: var(--radius-md);
+  background-color: #1e293b;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-family: inherit;
+  letter-spacing: 0.01em;
+}
+
+.report-btn:hover {
+  border-color: #475569;
+  background-color: #273549;
+  color: #e2e8f0;
+}
+
+.report-btn.copied {
+  border-color: #4ade80;
+  background-color: #052e16;
+  color: #4ade80;
+}
+
+/* ============================================================
+   MVP — Models Page
+   ============================================================ */
+
+.manual-section {
+  margin-bottom: 2px;
+}
+
+.active-model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  margin-bottom: 4px;
+}
+
+.search-wrap {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-light);
+  display: flex;
+  pointer-events: none;
+}
+
+.search-input {
+  padding-left: 30px !important;
+}
+
+.badge-active-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 4px;
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+  border-radius: 6px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ============================================================
+   MVP — Export Page
+   ============================================================ */
+
+.export-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.export-btn {
+  padding: 7px 4px;
+  border: 1px solid var(--border);
+  background-color: var(--panel);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+}
+
+.export-btn:hover {
+  border-color: var(--border-strong);
+  background-color: var(--panel-2);
+  color: var(--text);
+}
+
+.export-btn.active {
+  border-color: var(--text);
+  background-color: var(--panel);
+  color: var(--text);
+}
+
+/* ============================================================
+   MVP — Help Page
+   ============================================================ */
+
+.help-card {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.help-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.help-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.help-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+  font-family: inherit;
+}
+
+.help-link:hover {
+  border-color: var(--border-strong);
+  background-color: var(--panel-2);
+}
+
+.help-link-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+}
+
+.help-link-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.help-link-desc {
+  font-size: 10px;
+  color: var(--muted-light);
+}
+
+.help-link svg {
+  color: var(--muted-light);
+  flex-shrink: 0;
+}
+
+.help-about {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ============================================================
+   Spinner in button
+   ============================================================ */
+
+.btn-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
