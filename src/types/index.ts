@@ -187,16 +187,19 @@ export interface BalanceSnapshot {
   granted?: number;
   used?: number;
   available?: number;
+  unlimited?: boolean;
   raw?: unknown;
   error?: string;
 }
 
 export type BillingProbeKey = 'empty_reply_charge' | 'failed_request_charge';
 
+export type BillingProbeStatus = 'not_tested' | 'skipped' | 'not_found' | 'needs_review' | 'signal_confirmed';
+
 export interface BillingProbeResult {
   key: BillingProbeKey;
   title: string;
-  status: DiagnosisStatus;
+  status: BillingProbeStatus;
   confirmed: boolean;
   highRisk: boolean;
   httpStatus?: number;
@@ -210,6 +213,7 @@ export interface BillingProbeResult {
   hasImage: boolean;
   hasAudio: boolean;
   hasSearch: boolean;
+  balanceSource?: 'newapi' | 'manual' | 'unavailable';
   beforeBalance?: number;
   afterBalance?: number;
   balanceDelta?: number;

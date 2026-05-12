@@ -2255,6 +2255,13 @@ body {
   text-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
 }
 
+.rc2-status-badge.status-high-risk {
+  color: #F97316;
+  background-color: rgba(249, 115, 22, 0.15);
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  text-shadow: 0 0 20px rgba(249, 115, 22, 0.5);
+}
+
 /* Sections */
 .rc2-section {
   padding: 16px 20px;
@@ -2464,24 +2471,28 @@ body {
   text-align: center;
 }
 
-.rc2-probe-card.probe-success {
+.rc2-probe-card.probe-success,
+.rc2-probe-card.probe-not_found {
   border-color: rgba(34, 197, 94, 0.3);
   background-color: rgba(34, 197, 94, 0.08);
 }
 
 .rc2-probe-card.probe-warning,
-.rc2-probe-card.probe-risk {
+.rc2-probe-card.probe-risk,
+.rc2-probe-card.probe-needs_review {
   border-color: rgba(245, 158, 11, 0.4);
   background-color: rgba(245, 158, 11, 0.1);
 }
 
 .rc2-probe-card.probe-error,
-.rc2-probe-card.probe-confirmed {
+.rc2-probe-card.probe-confirmed,
+.rc2-probe-card.probe-signal_confirmed {
   border-color: rgba(239, 68, 68, 0.4);
   background-color: rgba(239, 68, 68, 0.1);
 }
 
-.rc2-probe-card.probe-skipped {
+.rc2-probe-card.probe-skipped,
+.rc2-probe-card.probe-not_tested {
   border-color: var(--report-border);
   background-color: var(--report-panel-2);
 }
@@ -2505,17 +2516,20 @@ body {
   color: #22C55E;
 }
 
-.rc2-probe-card.probe-warning .rc2-probe-status,
-.rc2-probe-card.probe-risk .rc2-probe-status {
+.rc2-probe-card.probe-not_found .rc2-probe-status {
+  color: #22C55E;
+}
+
+.rc2-probe-card.probe-needs_review .rc2-probe-status {
   color: #F59E0B;
 }
 
-.rc2-probe-card.probe-error .rc2-probe-status,
-.rc2-probe-card.probe-confirmed .rc2-probe-status {
+.rc2-probe-card.probe-signal_confirmed .rc2-probe-status {
   color: #EF4444;
 }
 
-.rc2-probe-card.probe-skipped .rc2-probe-status {
+.rc2-probe-card.probe-skipped .rc2-probe-status,
+.rc2-probe-card.probe-not_tested .rc2-probe-status {
   color: var(--report-muted);
 }
 
@@ -2645,6 +2659,38 @@ body {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   margin-top: 8px;
+}
+
+.cost-audit-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 0;
+  font-family: inherit;
+}
+
+.cost-audit-advanced-toggle:hover {
+  color: var(--text);
+}
+
+.cost-audit-advanced-body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.cost-audit-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.cost-audit-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 /* Metrics */
