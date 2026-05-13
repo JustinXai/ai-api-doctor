@@ -24,6 +24,16 @@ import {
   BalanceSnapshot,
   BillingProbeResult,
   BillingAnomalyReport,
+  BillingAnomalySummary,
+  RawQuotaBalance,
+  RawQuotaTimeline,
+  BillingJudgment,
+  BillingJudgmentLevel,
+  BillingJudgmentCode,
+  OutputSignal,
+  BillingDiagnosisReport,
+  DiagnosisProgress,
+  DiagnosisProgressStep,
 } from '../types';
 import { DEFAULT_SETTINGS, EXAMPLE_PROVIDER } from './defaults';
 import { ensureHostPermission } from './permissions';
@@ -875,10 +885,19 @@ function buildReport(
 
 // ─── Billing Anomaly Probes ─────────────────────────────────
 
-import type { BalanceSnapshot, BillingProbeResult, BillingAnomalyReport } from '../types';
+import type {
+  BalanceSnapshot,
+  BalanceTimeline,
+  BillingProbeResult,
+  BillingAnomalyReport,
+  OutputSignal,
+  BillingProbeResultStatus,
+  BillingAnomalySummary,
+} from '../types';
 
 // Epsilon for floating point comparison
-const EPSILON = 0.000001;
+const BALANCE_EPSILON = 0.000001;
+const SETTLEMENT_DELAY_MS = 1500;
 
 export async function getNewApiTokenUsage(
   baseUrl: string,
@@ -917,13 +936,29 @@ export async function getNewApiTokenUsage(
       };
     }
 
+    const unlimited = data['unlimited'] === true;
+    let source: BalanceSnapshot['source'] = 'newapi';
+    if (unlimited) source = 'unlimited';
+
+    // Try to determine precision from decimal places
+    const available = data['available'];
+    let precision: number | undefined;
+    if (typeof available === 'number') {
+      const str = available.toString();
+      const dotIndex = str.indexOf('.');
+      if (dotIndex >= 0) {
+        precision = str.length - dotIndex - 1;
+      }
+    }
+
     return {
       supported: true,
-      source: 'newapi',
+      source,
       granted: typeof data['granted'] === 'number' ? (data['granted'] as number) : undefined,
       used: typeof data['used'] === 'number' ? (data['used'] as number) : undefined,
       available: typeof data['available'] === 'number' ? (data['available'] as number) : undefined,
-      unlimited: data['unlimited'] === true,
+      unlimited,
+      precision,
       raw: data,
     };
   } catch (err) {
@@ -933,6 +968,100 @@ export async function getNewApiTokenUsage(
       error: err instanceof Error ? err.message : 'Unknown error',
     };
   }
+}
+
+export function summarizeBillingAnomaly(
+  report: BillingAnomalyReport,
+  hasModelId: boolean
+): BillingAnomalySummary {
+  if (!report.enabled) {
+    return {
+      status: 'not_enabled',
+      title: 'Billing anomaly probes not enabled',
+      titleZh: '未开启扣费异常检测',
+      message: 'This test only ran basic API diagnosis. Enable billing anomaly probes to check empty-reply and failed-request billing risks.',
+      messageZh: '本次仅完成基础调用诊断。开启扣费异常检测后，可检查空回复扣费和失败请求扣费风险。',
+      riskTags: [],
+      severity: 'skipped',
+    };
+  }
+
+  if (!hasModelId) {
+    return {
+      status: 'not_tested',
+      title: 'Billing anomaly probes not run',
+      titleZh: '扣费异常检测未运行',
+      message: 'Enter a model ID to run billing anomaly probes.',
+      messageZh: '请填写模型 ID 后重新诊断。',
+      riskTags: [],
+      severity: 'skipped',
+    };
+  }
+
+  const emptyProbe = report.emptyReplyProbe;
+  const failedProbe = report.failedRequestProbe;
+
+  // Check for signal_confirmed
+  if (emptyProbe?.status === 'signal_confirmed' || failedProbe?.status === 'signal_confirmed') {
+    const riskTags: string[] = [];
+    if (emptyProbe?.status === 'signal_confirmed') riskTags.push('EMPTY_REPLY_CHARGE_CONFIRMED');
+    if (failedProbe?.status === 'signal_confirmed') riskTags.push('FAILED_REQUEST_CHARGE_CONFIRMED');
+
+    return {
+      status: 'signal_confirmed',
+      title: 'Billing anomaly signal confirmed',
+      titleZh: '扣费异常信号已确认',
+      message: 'This test found a reproducible signal: no effective output or failed request with settled balance decrease.',
+      messageZh: '本次测试出现"无有效输出/请求失败 + 结算后余额减少"的可复现信号。',
+      riskTags,
+      severity: 'error',
+    };
+  }
+
+  // Check for needs_review
+  if (emptyProbe?.status === 'needs_review' || failedProbe?.status === 'needs_review') {
+    const riskTags: string[] = [];
+    if (emptyProbe?.status === 'needs_review') riskTags.push('EMPTY_REPLY_CHARGE_REVIEW');
+    if (failedProbe?.status === 'needs_review') riskTags.push('FAILED_REQUEST_CHARGE_REVIEW');
+    if (!report.balanceSnapshot?.supported) riskTags.push('BALANCE_UNAVAILABLE');
+
+    return {
+      status: 'needs_review',
+      title: 'Billing risk needs review',
+      titleZh: '扣费风险需复查',
+      message: 'This test found billing risk signals, but balance or output reasons could not be fully confirmed.',
+      messageZh: '本次测试发现扣费风险信号，但余额或输出原因无法完全确认。',
+      riskTags,
+      severity: 'warning',
+    };
+  }
+
+  // Both probes are not_found
+  if (
+    (emptyProbe?.status === 'not_found' || !emptyProbe) &&
+    (failedProbe?.status === 'not_found' || !failedProbe)
+  ) {
+    return {
+      status: 'not_found',
+      title: 'No billing anomaly signal found',
+      titleZh: '未发现扣费异常信号',
+      message: 'This test did not find empty-reply or failed-request billing signals.',
+      messageZh: '本次测试未发现空回复扣费或失败请求扣费信号。',
+      riskTags: [],
+      severity: 'success',
+    };
+  }
+
+  // Default case
+  return {
+    status: 'not_tested',
+    title: 'Billing anomaly probes incomplete',
+    titleZh: '扣费异常检测未完成',
+    message: 'Billing anomaly probes did not complete.',
+    messageZh: '扣费异常检测未能完成。',
+    riskTags: [],
+    severity: 'skipped',
+  };
 }
 
 export async function runBillingAnomalyProbes(
@@ -951,15 +1080,23 @@ export async function runBillingAnomalyProbes(
     return report;
   }
 
-  // Get balance snapshots
+  // Get balance snapshots before probes
   const beforeSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
   report.balanceSnapshot = beforeSnapshot;
 
   // Run empty reply probe
-  report.emptyReplyProbe = await runEmptyReplyProbe(baseUrl, apiKey, modelId, beforeSnapshot, manualBeforeBalance, manualAfterBalance);
+  try {
+    report.emptyReplyProbe = await runEmptyReplyProbe(baseUrl, apiKey, modelId, beforeSnapshot, manualBeforeBalance, manualAfterBalance);
+  } catch {
+    report.emptyReplyProbe = createFailedProbe('empty_reply_charge', 'Empty Reply Charge', 'Probe failed');
+  }
 
   // Run failed request probe
-  report.failedRequestProbe = await runFailedRequestProbe(baseUrl, apiKey, beforeSnapshot, manualBeforeBalance, manualAfterBalance);
+  try {
+    report.failedRequestProbe = await runFailedRequestProbe(baseUrl, apiKey, beforeSnapshot, manualBeforeBalance, manualAfterBalance);
+  } catch {
+    report.failedRequestProbe = createFailedProbe('failed_request_charge', 'Failed Request Charge', 'Probe failed');
+  }
 
   return report;
 }
@@ -971,31 +1108,233 @@ function createNotTestedProbe(key: 'empty_reply_charge' | 'failed_request_charge
     status: 'not_tested',
     confirmed: false,
     highRisk: false,
-    visibleOutputLength: 0,
-    hasToolCall: false,
-    hasImage: false,
-    hasAudio: false,
-    hasSearch: false,
+    outputSignal: createEmptyOutputSignal(),
     message: '',
     suggestion: '',
   };
 }
 
-function createSkippedProbe(key: 'empty_reply_charge' | 'failed_request_charge', title: string, reason: string): BillingProbeResult {
+function createFailedProbe(key: 'empty_reply_charge' | 'failed_request_charge', title: string, errorMsg: string): BillingProbeResult {
   return {
     key,
     title,
-    status: 'skipped',
+    status: 'needs_review',
     confirmed: false,
-    highRisk: false,
+    highRisk: true,
+    outputSignal: createEmptyOutputSignal(),
+    message: errorMsg,
+    suggestion: 'Probe failed to complete. Check provider logs.',
+  };
+}
+
+function createEmptyOutputSignal(): OutputSignal {
+  return {
+    visibleText: '',
     visibleOutputLength: 0,
+    completionTokens: undefined,
+    promptTokens: undefined,
+    totalTokens: undefined,
+    finishReason: undefined,
+    stopReason: undefined,
     hasToolCall: false,
     hasImage: false,
     hasAudio: false,
     hasSearch: false,
-    message: reason,
-    suggestion: '',
+    hasRefusal: false,
+    hasContentFilter: false,
+    hasErrorEvent: false,
+    hasAnyEffectiveOutput: false,
   };
+}
+
+function parseOutputSignal(event: Record<string, unknown>): OutputSignal {
+  const signal: OutputSignal = {
+    visibleText: '',
+    visibleOutputLength: 0,
+    completionTokens: undefined,
+    promptTokens: undefined,
+    totalTokens: undefined,
+    finishReason: undefined,
+    stopReason: undefined,
+    hasToolCall: false,
+    hasImage: false,
+    hasAudio: false,
+    hasSearch: false,
+    hasRefusal: false,
+    hasContentFilter: false,
+    hasErrorEvent: !!event['error'],
+    hasAnyEffectiveOutput: false,
+  };
+
+  // Parse content from delta or message
+  const choices = event['choices'] as Array<Record<string, unknown>> | undefined;
+  if (choices && Array.isArray(choices)) {
+    for (const choice of choices) {
+      // Check delta
+      const delta = choice['delta'] as Record<string, unknown> | undefined;
+      if (delta) {
+        const content = delta['content'];
+        if (typeof content === 'string') {
+          signal.visibleText += content;
+          signal.visibleOutputLength += content.length;
+        }
+        if (delta['tool_calls']) signal.hasToolCall = true;
+        if (delta['audio']) signal.hasAudio = true;
+        if (delta['image_url']) signal.hasImage = true;
+        if (delta['search_results'] || delta['web_search']) signal.hasSearch = true;
+        if (delta['refusal']) signal.hasRefusal = true;
+      }
+
+      // Check message (for non-streaming)
+      const message = choice['message'] as Record<string, unknown> | undefined;
+      if (message) {
+        const content = message['content'];
+        if (typeof content === 'string') {
+          signal.visibleText += content;
+          signal.visibleOutputLength += content.length;
+        }
+        if (message['tool_calls']) signal.hasToolCall = true;
+      }
+
+      // Check output_text (some providers use this)
+      const outputText = choice['output_text'];
+      if (typeof outputText === 'string') {
+        signal.visibleText += outputText;
+        signal.visibleOutputLength += outputText.length;
+      }
+
+      // Check finish_reason
+      const finishReason = choice['finish_reason'];
+      if (typeof finishReason === 'string') {
+        signal.finishReason = finishReason;
+        if (finishReason === 'tool_calls') signal.hasToolCall = true;
+      }
+
+      // Check stop_reason
+      const stopReason = choice['stop_reason'];
+      if (typeof stopReason === 'string') {
+        signal.stopReason = stopReason;
+      }
+
+      // Check content_filter
+      const contentFilter = choice['content_filter'];
+      if (contentFilter) signal.hasContentFilter = true;
+    }
+  }
+
+  // Parse usage
+  const usage = event['usage'] as Record<string, unknown> | undefined;
+  if (usage) {
+    signal.completionTokens = typeof usage['completion_tokens'] === 'number' ? usage['completion_tokens'] as number : undefined;
+    signal.promptTokens = typeof usage['prompt_tokens'] === 'number' ? usage['prompt_tokens'] as number : undefined;
+    signal.totalTokens = typeof usage['total_tokens'] === 'number' ? usage['total_tokens'] as number : undefined;
+  }
+
+  // Determine if has any effective output
+  signal.hasAnyEffectiveOutput =
+    signal.visibleOutputLength > 0 ||
+    signal.hasToolCall ||
+    signal.hasImage ||
+    signal.hasAudio ||
+    signal.hasSearch ||
+    signal.hasRefusal ||
+    signal.finishReason === 'tool_calls' ||
+    signal.stopReason === 'tool_use';
+
+  return signal;
+}
+
+async function wait(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function readBalanceTimeline(
+  baseUrl: string,
+  apiKey: string,
+  beforeSnapshot: BalanceSnapshot,
+  manualBeforeBalance?: number,
+  manualAfterBalance?: number
+): Promise<BalanceTimeline> {
+  const timeline: BalanceTimeline = {
+    settlementDelayMs: SETTLEMENT_DELAY_MS,
+    source: 'unsupported',
+    status: 'not_available',
+  };
+
+  // Determine source and before value
+  if (beforeSnapshot.supported && beforeSnapshot.available !== undefined && !beforeSnapshot.unlimited) {
+    timeline.before = beforeSnapshot;
+    timeline.beforeValue = beforeSnapshot.available;
+    timeline.source = 'newapi';
+  } else if (manualBeforeBalance !== undefined) {
+    timeline.before = { supported: true, source: 'manual', available: manualBeforeBalance };
+    timeline.beforeValue = manualBeforeBalance;
+    timeline.source = 'manual';
+  }
+
+  // Read immediate after balance
+  try {
+    const afterImmediateSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
+    timeline.afterImmediate = afterImmediateSnapshot;
+    if (afterImmediateSnapshot.supported && afterImmediateSnapshot.available !== undefined && !afterImmediateSnapshot.unlimited) {
+      timeline.afterImmediateValue = afterImmediateSnapshot.available;
+    }
+  } catch {
+    // Ignore
+  }
+
+  // Manual after balance overrides
+  if (manualAfterBalance !== undefined) {
+    timeline.afterImmediate = { supported: true, source: 'manual', available: manualAfterBalance };
+    timeline.afterImmediateValue = manualAfterBalance;
+  }
+
+  // Calculate immediate delta
+  if (timeline.beforeValue !== undefined && timeline.afterImmediateValue !== undefined) {
+    timeline.deltaImmediate = timeline.beforeValue - timeline.afterImmediateValue;
+  }
+
+  // Wait for settlement
+  await wait(SETTLEMENT_DELAY_MS);
+
+  // Read settled balance
+  try {
+    const afterSettledSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
+    timeline.afterSettled = afterSettledSnapshot;
+    if (afterSettledSnapshot.supported && afterSettledSnapshot.available !== undefined && !afterSettledSnapshot.unlimited) {
+      timeline.afterSettledValue = afterSettledSnapshot.available;
+    }
+  } catch {
+    // Ignore
+  }
+
+  // Calculate settled delta
+  if (timeline.beforeValue !== undefined && timeline.afterSettledValue !== undefined) {
+    timeline.deltaSettled = timeline.beforeValue - timeline.afterSettledValue;
+  }
+
+  // Determine status
+  if (timeline.source === 'unlimited' || beforeSnapshot.unlimited) {
+    timeline.status = 'unlimited';
+  } else if (timeline.beforeValue === undefined || timeline.afterSettledValue === undefined) {
+    if (timeline.beforeValue !== undefined && timeline.afterImmediateValue !== undefined) {
+      timeline.status = 'incomplete';
+    } else {
+      timeline.status = 'not_available';
+    }
+  } else if (timeline.deltaSettled !== undefined && timeline.deltaSettled > BALANCE_EPSILON) {
+    timeline.status = 'decreased';
+  } else if (timeline.deltaImmediate !== undefined && timeline.deltaImmediate > BALANCE_EPSILON && timeline.deltaSettled !== undefined && timeline.deltaSettled <= BALANCE_EPSILON) {
+    timeline.status = 'precharge_refunded';
+  } else if (timeline.deltaSettled !== undefined && timeline.deltaSettled <= BALANCE_EPSILON && timeline.deltaImmediate !== undefined && timeline.deltaImmediate > BALANCE_EPSILON) {
+    timeline.status = 'precharge_refunded';
+  } else if (beforeSnapshot.precision !== undefined && beforeSnapshot.precision <= 2 && timeline.deltaSettled !== undefined && timeline.deltaSettled <= 0.01) {
+    timeline.status = 'precision_limited';
+  } else {
+    timeline.status = 'available';
+  }
+
+  return timeline;
 }
 
 async function runEmptyReplyProbe(
@@ -1007,38 +1346,20 @@ async function runEmptyReplyProbe(
   manualAfterBalance?: number
 ): Promise<BillingProbeResult> {
   if (!modelId) {
-    return createSkippedProbe('empty_reply_charge', 'Empty Reply Charge', 'No model selected');
-  }
-
-  let afterSnapshot: BalanceSnapshot | null = null;
-  let afterBalance: number | undefined;
-  let beforeBalance: number | undefined;
-  let balanceSource: 'newapi' | 'manual' | 'unavailable' = 'unavailable';
-
-  // Determine before balance
-  if (beforeSnapshot.supported && beforeSnapshot.available !== undefined && !beforeSnapshot.unlimited) {
-    beforeBalance = beforeSnapshot.available;
-    balanceSource = 'newapi';
-  } else if (manualBeforeBalance !== undefined) {
-    beforeBalance = manualBeforeBalance;
-    balanceSource = 'manual';
+    return createNotTestedProbe('empty_reply_charge', 'Empty Reply Charge');
   }
 
   const result: BillingProbeResult = {
     key: 'empty_reply_charge',
     title: 'Empty Reply Charge',
-    status: 'skipped',
+    status: 'not_tested',
     confirmed: false,
     highRisk: false,
-    visibleOutputLength: 0,
-    hasToolCall: false,
-    hasImage: false,
-    hasAudio: false,
-    hasSearch: false,
+    outputSignal: createEmptyOutputSignal(),
+    endpoint: `${baseUrl}/chat/completions`,
+    model: modelId,
     message: '',
     suggestion: '',
-    balanceSource,
-    beforeBalance,
   };
 
   try {
@@ -1059,20 +1380,54 @@ async function runEmptyReplyProbe(
     });
 
     result.httpStatus = response.status;
+    result.requestId = response.headers.get('x-request-id') || undefined;
 
-    // Get after balance
-    afterSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
-    if (afterSnapshot.supported && afterSnapshot.available !== undefined && !afterSnapshot.unlimited) {
-      afterBalance = afterSnapshot.available;
-    } else if (manualAfterBalance !== undefined) {
-      afterBalance = manualAfterBalance;
-      if (balanceSource === 'unavailable') balanceSource = 'manual';
+    // Read stream
+    const text = await response.text();
+    result.streamStatus = 'unknown';
+
+    // Parse SSE stream and aggregate output
+    const streamData = parseSSEStream(text);
+    let aggregatedSignal = createEmptyOutputSignal();
+
+    for (const event of streamData) {
+      if (event['error']) {
+        result.outputSignal.hasErrorEvent = true;
+      }
+
+      const signal = parseOutputSignal(event);
+      // Aggregate text
+      aggregatedSignal.visibleText += signal.visibleText;
+      aggregatedSignal.visibleOutputLength += signal.visibleOutputLength;
+      // Aggregate other signals (OR)
+      aggregatedSignal.hasToolCall = aggregatedSignal.hasToolCall || signal.hasToolCall;
+      aggregatedSignal.hasImage = aggregatedSignal.hasImage || signal.hasImage;
+      aggregatedSignal.hasAudio = aggregatedSignal.hasAudio || signal.hasAudio;
+      aggregatedSignal.hasSearch = aggregatedSignal.hasSearch || signal.hasSearch;
+      aggregatedSignal.hasRefusal = aggregatedSignal.hasRefusal || signal.hasRefusal;
+      aggregatedSignal.hasContentFilter = aggregatedSignal.hasContentFilter || signal.hasContentFilter;
+      aggregatedSignal.hasErrorEvent = aggregatedSignal.hasErrorEvent || signal.hasErrorEvent;
+      aggregatedSignal.hasAnyEffectiveOutput = aggregatedSignal.hasAnyEffectiveOutput || signal.hasAnyEffectiveOutput;
+      // Use latest usage
+      if (signal.completionTokens !== undefined) aggregatedSignal.completionTokens = signal.completionTokens;
+      if (signal.promptTokens !== undefined) aggregatedSignal.promptTokens = signal.promptTokens;
+      if (signal.totalTokens !== undefined) aggregatedSignal.totalTokens = signal.totalTokens;
+      if (signal.finishReason) aggregatedSignal.finishReason = signal.finishReason;
+      if (signal.stopReason) aggregatedSignal.stopReason = signal.stopReason;
+
+      // Check stream end
+      const choices = event['choices'] as Array<Record<string, unknown>> | undefined;
+      if (choices) {
+        for (const choice of choices) {
+          const fr = choice['finish_reason'];
+          if (fr === 'stop' || fr === 'eos') {
+            result.streamStatus = 'done';
+          }
+        }
+      }
     }
 
-    result.afterBalance = afterBalance;
-    if (beforeBalance !== undefined && afterBalance !== undefined) {
-      result.balanceDelta = beforeBalance - afterBalance;
-    }
+    result.outputSignal = aggregatedSignal;
 
     if (!response.ok) {
       result.status = 'needs_review';
@@ -1081,107 +1436,75 @@ async function runEmptyReplyProbe(
       return result;
     }
 
-    // Read stream
-    const text = await response.text();
-    result.streamStatus = 'unknown';
-
-    const streamData = parseSSEStream(text);
-    let visibleOutputLength = 0;
-    let completionTokens: number | undefined;
-    let promptTokens: number | undefined;
-    let totalTokens: number | undefined;
-    let hasToolCall = false;
-    let hasImage = false;
-    let hasAudio = false;
-    let hasSearch = false;
-
-    for (const event of streamData) {
-      if (event['error']) {
-        result.status = 'needs_review';
-        result.message = String(event['error']);
-        result.suggestion = 'Stream returned error event';
-        return result;
-      }
-
-      const choices = event['choices'];
-      if (choices && Array.isArray(choices)) {
-        for (const choice of choices) {
-          const delta = choice['delta'];
-          if (delta) {
-            const content = delta['content'];
-            if (typeof content === 'string' && content.length > 0) {
-              visibleOutputLength += content.length;
-            }
-
-            const toolCalls = delta['tool_calls'];
-            if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
-              hasToolCall = true;
-            }
-
-            if (delta['audio']) hasAudio = true;
-            if (delta['image_url']) hasImage = true;
-            if (delta['search_results']) hasSearch = true;
-          }
-
-          const finishReason = choice['finish_reason'];
-          if (finishReason === 'stop' || finishReason === 'eos') {
-            result.streamStatus = 'done';
-          }
-        }
-      }
-
-      const usage = event['usage'];
-      if (usage) {
-        completionTokens = typeof usage['completion_tokens'] === 'number' ? (usage['completion_tokens'] as number) : undefined;
-        promptTokens = typeof usage['prompt_tokens'] === 'number' ? (usage['prompt_tokens'] as number) : undefined;
-        totalTokens = typeof usage['total_tokens'] === 'number' ? (usage['total_tokens'] as number) : undefined;
-      }
+    if (result.streamStatus === 'unknown' && aggregatedSignal.visibleOutputLength > 0) {
+      result.streamStatus = 'eof';
     }
 
-    result.visibleOutputLength = visibleOutputLength;
-    result.completionTokens = completionTokens;
-    result.promptTokens = promptTokens;
-    result.totalTokens = totalTokens;
-    result.hasToolCall = hasToolCall;
-    result.hasImage = hasImage;
-    result.hasAudio = hasAudio;
-    result.hasSearch = hasSearch;
+    // Read balance timeline
+    const timeline = await readBalanceTimeline(baseUrl, apiKey, beforeSnapshot, manualBeforeBalance, manualAfterBalance);
+    result.balanceTimeline = timeline;
 
-    // Check if empty reply risk
-    const isEmptyReply = visibleOutputLength === 0 && !hasToolCall && !hasImage && !hasAudio && !hasSearch;
-    const isZeroOrMissingCompletion = completionTokens === 0 || completionTokens === undefined;
+    // Determine result based on output and balance
+    const isEmptyReply =
+      aggregatedSignal.visibleOutputLength === 0 &&
+      !aggregatedSignal.hasToolCall &&
+      !aggregatedSignal.hasImage &&
+      !aggregatedSignal.hasAudio &&
+      !aggregatedSignal.hasSearch &&
+      !aggregatedSignal.hasRefusal &&
+      !aggregatedSignal.hasContentFilter &&
+      (aggregatedSignal.completionTokens === 0 || aggregatedSignal.completionTokens === undefined);
 
-    if (isEmptyReply && isZeroOrMissingCompletion) {
-      // Empty reply risk confirmed
-      if (result.balanceDelta !== undefined && result.balanceDelta > EPSILON) {
-        result.status = 'signal_confirmed';
-        result.confirmed = true;
-        result.highRisk = true;
-        result.message = 'Empty reply with balance decrease detected';
-        result.suggestion = 'Balance decreased despite no visible output';
-      } else if (beforeSnapshot.unlimited) {
-        result.status = 'needs_review';
-        result.message = 'Empty reply detected, balance is unlimited or not auditable';
-        result.suggestion = 'Balance is unlimited or cannot be audited';
-      } else if (balanceSource === 'unavailable') {
-        result.status = 'needs_review';
-        result.message = 'Empty reply detected, balance could not be confirmed';
-        result.suggestion = 'Balance unavailable. Check provider logs.';
-      } else if (result.balanceDelta === undefined || result.balanceDelta <= EPSILON) {
-        result.status = 'needs_review';
-        result.message = 'Empty reply detected, balance change below precision or no deduction';
-        result.suggestion = 'Balance change may be below display precision. Check provider logs.';
-      }
-    } else {
-      // Normal response with output
+    if (!isEmptyReply) {
       result.status = 'not_found';
       result.message = 'No empty-reply billing signal found';
       result.suggestion = 'Response contains visible output';
+      return result;
     }
 
-    if (result.streamStatus === 'unknown' && visibleOutputLength > 0) {
-      result.streamStatus = 'eof';
+    // Empty reply detected, check balance
+    if (timeline.status === 'precharge_refunded') {
+      result.status = 'not_found';
+      result.message = 'Precharge was refunded. No final billing anomaly signal found.';
+      result.suggestion = 'Balance returned to before level after settlement.';
+      return result;
     }
+
+    if (timeline.status === 'unlimited' || beforeSnapshot.unlimited) {
+      result.status = 'needs_review';
+      result.message = 'Empty reply detected, balance is unlimited or not auditable';
+      result.suggestion = 'Balance is unlimited. Cannot audit billing.';
+      return result;
+    }
+
+    if (timeline.status === 'not_available' || timeline.status === 'incomplete') {
+      result.status = 'needs_review';
+      result.message = 'Empty reply detected, balance could not be confirmed';
+      result.suggestion = 'Balance unavailable. Check provider logs.';
+      return result;
+    }
+
+    if (timeline.status === 'precision_limited') {
+      result.status = 'needs_review';
+      result.message = 'Empty reply detected, balance change below display precision';
+      result.suggestion = 'Balance change may be below display precision. Check provider logs.';
+      return result;
+    }
+
+    if (timeline.deltaSettled !== undefined && timeline.deltaSettled > BALANCE_EPSILON) {
+      result.status = 'signal_confirmed';
+      result.confirmed = true;
+      result.highRisk = true;
+      result.message = 'Empty reply with settled balance decrease detected';
+      result.suggestion = 'Balance decreased despite no visible output';
+      return result;
+    }
+
+    // Default to not_found
+    result.status = 'not_found';
+    result.message = 'Empty reply detected but no final balance decrease';
+    result.suggestion = 'No confirmed billing anomaly.';
+    return result;
 
   } catch (err) {
     result.status = 'needs_review';
@@ -1199,37 +1522,18 @@ async function runFailedRequestProbe(
   manualBeforeBalance?: number,
   manualAfterBalance?: number
 ): Promise<BillingProbeResult> {
-  let afterSnapshot: BalanceSnapshot | null = null;
-  let afterBalance: number | undefined;
-  let beforeBalance: number | undefined;
-  let balanceSource: 'newapi' | 'manual' | 'unavailable' = 'unavailable';
-
-  if (beforeSnapshot.supported && beforeSnapshot.available !== undefined && !beforeSnapshot.unlimited) {
-    beforeBalance = beforeSnapshot.available;
-    balanceSource = 'newapi';
-  } else if (manualBeforeBalance !== undefined) {
-    beforeBalance = manualBeforeBalance;
-    balanceSource = 'manual';
-  }
-
   const result: BillingProbeResult = {
     key: 'failed_request_charge',
     title: 'Failed Request Charge',
-    status: 'skipped',
+    status: 'not_tested',
     confirmed: false,
     highRisk: false,
-    visibleOutputLength: 0,
-    hasToolCall: false,
-    hasImage: false,
-    hasAudio: false,
-    hasSearch: false,
+    outputSignal: createEmptyOutputSignal(),
+    endpoint: `${baseUrl}/chat/completions`,
+    model: `ai-api-doctor-invalid-model-${Date.now()}`,
     message: '',
     suggestion: '',
-    balanceSource,
-    beforeBalance,
   };
-
-  const invalidModel = `ai-api-doctor-invalid-model-${Date.now()}`;
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -1239,7 +1543,7 @@ async function runFailedRequestProbe(
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: invalidModel,
+        model: result.model,
         messages: [{ role: 'user', content: 'Reply exactly: 1' }],
         max_tokens: 5,
         temperature: 0,
@@ -1248,47 +1552,86 @@ async function runFailedRequestProbe(
     });
 
     result.httpStatus = response.status;
+    result.requestId = response.headers.get('x-request-id') || undefined;
 
-    afterSnapshot = await getNewApiTokenUsage(baseUrl, apiKey);
-    if (afterSnapshot.supported && afterSnapshot.available !== undefined && !afterSnapshot.unlimited) {
-      afterBalance = afterSnapshot.available;
-    } else if (manualAfterBalance !== undefined) {
-      afterBalance = manualAfterBalance;
-      if (balanceSource === 'unavailable') balanceSource = 'manual';
-    }
-
-    result.afterBalance = afterBalance;
-    if (beforeBalance !== undefined && afterBalance !== undefined) {
-      result.balanceDelta = beforeBalance - afterBalance;
-    }
-
-    const isFailedRequest = !response.ok;
-
-    if (isFailedRequest) {
-      if (result.balanceDelta !== undefined && result.balanceDelta > EPSILON) {
-        result.status = 'signal_confirmed';
-        result.confirmed = true;
-        result.highRisk = true;
-        result.message = 'Failed request with balance decrease detected';
-        result.suggestion = 'Balance decreased despite request failure';
-      } else if (beforeSnapshot.unlimited) {
-        result.status = 'needs_review';
-        result.message = 'Failed request detected, balance is unlimited or not auditable';
-        result.suggestion = 'Balance is unlimited or cannot be audited';
-      } else if (balanceSource === 'unavailable') {
-        result.status = 'needs_review';
-        result.message = 'Failed request detected, balance could not be confirmed';
-        result.suggestion = 'Balance unavailable. Check provider logs.';
-      } else {
-        result.status = 'not_found';
-        result.message = 'No failed-request billing signal found';
-        result.suggestion = 'Request failed but no balance deduction';
+    // Try to read response
+    let responseText = '';
+    try {
+      responseText = await response.text();
+      const json = JSON.parse(responseText);
+      if (json?.error) {
+        result.providerMessage = typeof json.error === 'string' ? json.error : JSON.stringify(json.error);
       }
-    } else {
+      // Parse output
+      if (json) {
+        const signal = parseOutputSignal(json);
+        result.outputSignal = signal;
+      }
+    } catch {
+      // Non-JSON or empty
+    }
+
+    // Check if request failed
+    const isFailedRequest =
+      !response.ok ||
+      responseText.includes('error') ||
+      responseText.includes('not found') ||
+      responseText.includes('invalid') ||
+      responseText.includes('model not found') ||
+      responseText.includes('no available channel') ||
+      responseText.includes('no available model') ||
+      responseText.includes('permission denied') ||
+      responseText.includes('group denied') ||
+      responseText.includes('unauthorized') ||
+      responseText.includes('insufficient quota') ||
+      responseText.includes('resource_exhausted');
+
+    if (!isFailedRequest) {
       result.status = 'needs_review';
       result.message = 'Request unexpectedly succeeded with invalid model';
       result.suggestion = 'Unexpected success with invalid model';
+      return result;
     }
+
+    // Read balance timeline
+    const timeline = await readBalanceTimeline(baseUrl, apiKey, beforeSnapshot, manualBeforeBalance, manualAfterBalance);
+    result.balanceTimeline = timeline;
+
+    if (timeline.status === 'precharge_refunded') {
+      result.status = 'not_found';
+      result.message = 'Precharge was refunded. No final billing anomaly signal found.';
+      result.suggestion = 'Balance returned to before level after settlement.';
+      return result;
+    }
+
+    if (timeline.status === 'unlimited' || beforeSnapshot.unlimited) {
+      result.status = 'needs_review';
+      result.message = 'Failed request detected, balance is unlimited or not auditable';
+      result.suggestion = 'Balance is unlimited. Cannot audit billing.';
+      return result;
+    }
+
+    if (timeline.status === 'not_available' || timeline.status === 'incomplete') {
+      result.status = 'needs_review';
+      result.message = 'Failed request detected, balance could not be confirmed';
+      result.suggestion = 'Balance unavailable. Check provider logs.';
+      return result;
+    }
+
+    if (timeline.deltaSettled !== undefined && timeline.deltaSettled > BALANCE_EPSILON) {
+      result.status = 'signal_confirmed';
+      result.confirmed = true;
+      result.highRisk = true;
+      result.message = 'Failed request with settled balance decrease detected';
+      result.suggestion = 'Balance decreased despite request failure';
+      return result;
+    }
+
+    // Default to not_found
+    result.status = 'not_found';
+    result.message = 'Request failed but no final balance decrease';
+    result.suggestion = 'No confirmed billing anomaly.';
+    return result;
 
   } catch (err) {
     result.status = 'needs_review';
@@ -1332,3 +1675,580 @@ function parseSSEStream(text: string): Record<string, unknown>[] {
 
   return events;
 }
+
+// ─── New API / One API Raw Quota Functions ──────────────────
+
+const QUOTA_EPSILON = 0.5; // Small epsilon for raw quota comparison
+const MONEY_EPSILON = 0.000001; // For USD comparison
+const SETTLEMENT_DELAY_3S = 3000; // 3 seconds settlement delay
+const SETTLEMENT_DELAY_10S = 10000; // 10 seconds settlement delay
+
+/**
+ * Read userId from localStorage using injected script
+ */
+async function readUserIdFromPage(tabId: number): Promise<string | null> {
+  try {
+    // First try messaging the content script
+    const response = await browser.tabs.sendMessage(tabId, { type: 'GET_NEWAPI_RAW_BALANCE' });
+    if (response?.success && response?.data?.userId) {
+      return response.data.userId;
+    }
+    if (response?.error === 'USER_NOT_FOUND') {
+      return null; // User really not found, not a connection issue
+    }
+  } catch {
+    // Content script not available, try executeScript
+  }
+
+  // Fallback: try to execute script directly
+  try {
+    // Dynamic import of the content script logic
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        try {
+          const userStr = localStorage.getItem('user') || '{}';
+          const user = JSON.parse(userStr);
+          return { userId: String(user.id || '') };
+        } catch {
+          return { userId: '' };
+        }
+      },
+    });
+    if (results && results[0]?.result?.userId) {
+      return results[0].result.userId;
+    }
+  } catch {
+    // executeScript also failed
+  }
+
+  return null;
+}
+
+/**
+ * Request raw quota balance from content script with fallback
+ */
+export async function requestRawQuotaFromTab(tabId: number): Promise<RawQuotaBalance | null> {
+  // Try messaging content script first
+  try {
+    const response = await browser.tabs.sendMessage(tabId, { type: 'GET_NEWAPI_RAW_BALANCE' });
+    if (response?.success && response?.data) {
+      return response.data as RawQuotaBalance;
+    }
+    // If content script exists but returned error, propagate
+    if (response?.error) {
+      return null;
+    }
+  } catch {
+    // Content script not available, fall through to executeScript
+  }
+
+  // Fallback: use scripting.executeScript
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async () => {
+        try {
+          // Get userId
+          const userStr = localStorage.getItem('user') || '{}';
+          const user = JSON.parse(userStr);
+          const userId = String(user.id || '');
+
+          if (!userId) {
+            return { error: 'USER_NOT_FOUND' };
+          }
+
+          const headers = {
+            'accept': 'application/json, text/plain, */*',
+            'cache-control': 'no-store',
+            'new-api-user': userId,
+          };
+
+          const [statusRes, selfRes] = await Promise.all([
+            fetch('/api/status', { method: 'GET', credentials: 'include', headers }),
+            fetch('/api/user/self', { method: 'GET', credentials: 'include', headers }),
+          ]);
+
+          if (!statusRes.ok || !selfRes.ok) {
+            return { error: 'API_REQUEST_FAILED' };
+          }
+
+          const statusData = await statusRes.json();
+          const selfData = await selfRes.json();
+
+          if (!statusData?.success || !selfData?.success) {
+            return { error: 'API_RETURNED_ERROR' };
+          }
+
+          const quotaPerUnit = Number(statusData.data?.quota_per_unit || 500000);
+          const rawQuota = Number(selfData.data?.quota);
+
+          if (!Number.isFinite(rawQuota)) {
+            return { error: 'QUOTA_FIELD_MISSING' };
+          }
+
+          return {
+            userId,
+            rawQuota,
+            quotaPerUnit,
+            usdBalance: rawQuota / quotaPerUnit,
+            usedQuota: Number(selfData.data?.used_quota || 0),
+            requestCount: Number(selfData.data?.request_count || 0),
+            timestamp: Date.now(),
+          };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      },
+    });
+
+    if (results && results[0]?.result) {
+      const result = results[0].result;
+      if ('error' in result) {
+        return null;
+      }
+      return result as RawQuotaBalance;
+    }
+  } catch {
+    // Both methods failed
+  }
+
+  return null;
+}
+
+/**
+ * Create an empty raw quota timeline
+ */
+export function createEmptyRawQuotaTimeline(error?: string): RawQuotaTimeline {
+  return {
+    before: undefined,
+    afterImmediate: undefined,
+    after3s: undefined,
+    after10s: undefined,
+    delta3s: undefined,
+    delta10s: undefined,
+    readable: false,
+    error,
+  };
+}
+
+/**
+ * Read raw quota timeline with multiple settlement checks
+ */
+export async function readRawQuotaTimeline(
+  baseUrl: string,
+  apiKey: string,
+  tabId: number,
+  options: { requestStartTime?: number } = {}
+): Promise<RawQuotaTimeline> {
+  const result = createEmptyRawQuotaTimeline();
+
+  // Read initial balance
+  const beforeBalance = await requestRawQuotaFromTab(tabId);
+  if (!beforeBalance) {
+    result.error = 'USER_NOT_LOGGED_IN';
+    return result;
+  }
+  result.before = beforeBalance;
+  result.readable = true;
+
+  // Perform the test request
+  const invalidModel = `ai-api-doctor-invalid-${Date.now()}`;
+  let requestEndTime = Date.now();
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: invalidModel,
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 5,
+        stream: false,
+      }),
+    });
+
+    requestEndTime = Date.now();
+    result.afterImmediate = await requestRawQuotaFromTab(tabId);
+
+    // Wait 3 seconds from request end
+    await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_3S));
+    result.after3s = await requestRawQuotaFromTab(tabId);
+
+    // Wait additional 7 seconds (total 10s from request end)
+    await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_10S - SETTLEMENT_DELAY_3S));
+    result.after10s = await requestRawQuotaFromTab(tabId);
+
+    // Calculate deltas
+    if (result.after3s) {
+      result.delta3s = result.before.rawQuota - result.after3s.rawQuota;
+    }
+    if (result.after10s) {
+      result.delta10s = result.before.rawQuota - result.after10s.rawQuota;
+    }
+
+  } catch (error) {
+    // Even if request fails, try to read balance
+    result.afterImmediate = await requestRawQuotaFromTab(tabId);
+  }
+
+  return result;
+}
+
+/**
+ * Judge billing result based on raw quota timeline and response info
+ */
+export function judgeBilling(
+  timeline: RawQuotaTimeline,
+  responseInfo: {
+    httpStatus: number;
+    error?: boolean;
+    visibleText?: string;
+    completionTokens?: number;
+    hasToolCall?: boolean;
+    hasImage?: boolean;
+    hasAudio?: boolean;
+    hasSearch?: boolean;
+  }
+): BillingJudgment {
+  const { delta3s, delta10s, before } = timeline;
+
+  const failed = responseInfo.httpStatus >= 400 || responseInfo.error;
+
+  const noEffectiveOutput =
+    !(responseInfo.visibleText?.trim()) &&
+    Number(responseInfo.completionTokens || 0) === 0 &&
+    !responseInfo.hasToolCall &&
+    !responseInfo.hasImage &&
+    !responseInfo.hasAudio &&
+    !responseInfo.hasSearch;
+
+  // Check if quota is readable
+  if (!timeline.readable || before === undefined) {
+    return {
+      code: 'raw_quota_unavailable',
+      level: 'risk',
+      title: 'Balance unreadable',
+      titleZh: '无法读取原始余额',
+      detail: 'Cannot read raw quota. Low-precision detection only.',
+      detailZh: '无法读取原始余额，只能进行低精度判断。',
+    };
+  }
+
+  // Normal: precharge was refunded
+  if (delta3s !== undefined && delta3s > QUOTA_EPSILON && delta10s !== undefined && Math.abs(delta10s) <= QUOTA_EPSILON) {
+    const delta3Display = delta3s > 0 ? `+${delta3s}` : String(delta3s);
+    return {
+      code: 'precharge_refunded',
+      level: 'ok',
+      title: 'Precharge refunded',
+      titleZh: '预扣已返还',
+      detail: `Precharged ${delta3Display} quota, but refunded within 10 seconds.`,
+      detailZh: `请求后曾预扣 ${delta3Display} quota，但 10 秒内已返还。`,
+    };
+  }
+
+  // Bad: failed request with final deduction
+  if (failed && noEffectiveOutput && delta10s !== undefined && delta10s > QUOTA_EPSILON) {
+    const usdDelta = before ? (delta10s / before.quotaPerUnit).toFixed(6) : '0';
+    return {
+      code: 'failed_request_charged',
+      level: 'bad',
+      title: 'Failed request billing anomaly',
+      titleZh: '失败请求扣费异常',
+      detail: `Request failed with no effective output, but final deduction ${delta10s} quota (~$${usdDelta}).`,
+      detailZh: `请求失败且无有效输出，但最终减少 ${delta10s} quota，约 $${usdDelta}。`,
+    };
+  }
+
+  // Bad: empty reply with final deduction
+  if (!failed && noEffectiveOutput && delta10s !== undefined && delta10s > QUOTA_EPSILON) {
+    const usdDelta = before ? (delta10s / before.quotaPerUnit).toFixed(6) : '0';
+    return {
+      code: 'empty_response_charged',
+      level: 'bad',
+      title: 'Empty reply billing anomaly',
+      titleZh: '空回复扣费异常',
+      detail: `No effective output, but final deduction ${delta10s} quota (~$${usdDelta}).`,
+      detailZh: `请求无有效输出，但最终减少 ${delta10s} quota，约 $${usdDelta}。`,
+    };
+  }
+
+  // OK: failed request without deduction
+  if (failed && delta10s !== undefined && Math.abs(delta10s) <= QUOTA_EPSILON) {
+    return {
+      code: 'failed_request_not_charged',
+      level: 'ok',
+      title: 'Failed request not charged',
+      titleZh: '失败请求未扣费',
+      detail: 'Request failed, but raw quota unchanged.',
+      detailZh: '请求失败，但原始额度未减少。',
+    };
+  }
+
+  // OK: normal request
+  if (!failed && !noEffectiveOutput) {
+    const deltaDisplay = delta10s !== undefined ? (delta10s >= 0 ? `+${delta10s}` : String(delta10s)) : '0';
+    const usdDelta = before && delta10s !== undefined ? (delta10s / before.quotaPerUnit).toFixed(6) : '0';
+    return {
+      code: 'completed',
+      level: 'ok',
+      title: 'Detection completed',
+      titleZh: '检测完成',
+      detail: `Final change ${deltaDisplay} quota (~$${usdDelta}).`,
+      detailZh: `最终额度变化 ${deltaDisplay} quota，约 $${usdDelta}。`,
+    };
+  }
+
+  // Info: default case
+  const deltaDisplay = delta10s !== undefined ? (delta10s >= 0 ? `+${delta10s}` : String(delta10s)) : '0';
+  const usdDelta = before && delta10s !== undefined ? (delta10s / before.quotaPerUnit).toFixed(6) : '0';
+  return {
+    code: 'completed',
+    level: 'info',
+    title: 'Detection complete',
+    titleZh: '检测完成',
+    detail: `Final change ${deltaDisplay} quota (~$${usdDelta}).`,
+    detailZh: `最终额度变化 ${deltaDisplay} quota，约 $${usdDelta}。`,
+  };
+}
+
+/**
+ * Get diagnosis progress message
+ */
+export function getDiagnosisProgressMessage(step: DiagnosisProgressStep): { message: string; messageZh: string; percent: number } {
+  const messages: Record<DiagnosisProgressStep, { message: string; messageZh: string; percent: number }> = {
+    idle: { message: 'Ready', messageZh: '准备就绪', percent: 0 },
+    reading_before: { message: 'Reading balance before test...', messageZh: '读取检测前额度...', percent: 10 },
+    sending_request: { message: 'Sending test request...', messageZh: '发送测试请求...', percent: 30 },
+    reading_after: { message: 'Reading balance after request...', messageZh: '读取请求后额度...', percent: 50 },
+    waiting_3s: { message: 'Waiting 3 seconds...', messageZh: '等待 3 秒...', percent: 60 },
+    waiting_10s: { message: 'Waiting 10 seconds...', messageZh: '等待 10 秒...', percent: 80 },
+    generating_report: { message: 'Generating report...', messageZh: '生成报告...', percent: 95 },
+  };
+  return messages[step];
+}
+
+/**
+ * Run simplified billing diagnosis for New API / One API
+ */
+export async function runBillingDiagnosis(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string,
+  tabId: number,
+  onProgress?: (progress: DiagnosisProgress) => void
+): Promise<BillingDiagnosisReport> {
+  const startTime = new Date().toISOString();
+
+  const report: BillingDiagnosisReport = {
+    providerName: 'New API',
+    maskedKey: maskApiKey(apiKey),
+    activeModelId: modelId,
+    baseUrl,
+    startedAt: startTime,
+    finishedAt: startTime,
+    judgment: {
+      code: 'completed',
+      level: 'info',
+      title: 'Detection incomplete',
+      titleZh: '检测未完成',
+      detail: 'Diagnosis did not complete.',
+      detailZh: '诊断未能完成。',
+    },
+    status: 'ok',
+  };
+
+  try {
+    // Step 1: Read initial balance
+    onProgress?.({ step: 'reading_before', ...getDiagnosisProgressMessage('reading_before') });
+    const beforeBalance = await requestRawQuotaFromTab(tabId);
+    if (!beforeBalance) {
+      report.rawQuotaTimeline = createEmptyRawQuotaTimeline('USER_NOT_LOGGED_IN');
+      report.judgment = {
+        code: 'raw_quota_unavailable',
+        level: 'risk',
+        title: 'Balance unreadable',
+        titleZh: '无法读取原始余额',
+        detail: 'User not logged in to New API console. Cannot read raw quota.',
+        detailZh: '未登录 New API 控制台，无法读取原始余额。',
+      };
+      report.status = 'risk';
+      report.finishedAt = new Date().toISOString();
+      return report;
+    }
+
+    report.rawQuotaTimeline = {
+      before: beforeBalance,
+      readable: true,
+      settlementDelayMs: SETTLEMENT_DELAY_10S,
+      status: 'available',
+    };
+
+    // Step 2: Send test request
+    onProgress?.({ step: 'sending_request', ...getDiagnosisProgressMessage('sending_request') });
+    const invalidModel = `ai-api-doctor-invalid-${Date.now()}`;
+    let invalidResponse: Response;
+    let invalidResponseText = '';
+    let invalidResponseInfo = {
+      httpStatus: 0,
+      error: false,
+      visibleText: '',
+      completionTokens: 0,
+      hasToolCall: false,
+      hasImage: false,
+      hasAudio: false,
+      hasSearch: false,
+    };
+
+    try {
+      invalidResponse = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: invalidModel,
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 5,
+          stream: false,
+        }),
+      });
+
+      invalidResponseInfo.httpStatus = invalidResponse.status;
+      invalidResponseText = await invalidResponse.text();
+
+      // Parse response
+      try {
+        const data = JSON.parse(invalidResponseText);
+        invalidResponseInfo.visibleText = data.choices?.[0]?.message?.content || '';
+        invalidResponseInfo.completionTokens = data.usage?.completion_tokens || 0;
+        invalidResponseInfo.hasToolCall = !!(data.choices?.[0]?.message?.tool_calls);
+        invalidResponseInfo.hasImage = !!(data.choices?.[0]?.message?.image_url);
+        invalidResponseInfo.error = !!data.error;
+      } catch {
+        invalidResponseInfo.error = true;
+      }
+    } catch (err) {
+      invalidResponseInfo.error = true;
+    }
+
+    // Read immediate balance after invalid model request
+    onProgress?.({ step: 'reading_after', ...getDiagnosisProgressMessage('reading_after') });
+    report.rawQuotaTimeline.afterImmediate = await requestRawQuotaFromTab(tabId);
+
+    // Step 3: Wait 3 seconds and read balance
+    onProgress?.({ step: 'waiting_3s', ...getDiagnosisProgressMessage('waiting_3s') });
+    await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_3S));
+    report.rawQuotaTimeline.after3s = await requestRawQuotaFromTab(tabId);
+    if (report.rawQuotaTimeline.after3s && report.rawQuotaTimeline.before) {
+      report.rawQuotaTimeline.delta3s = report.rawQuotaTimeline.before.rawQuota - report.rawQuotaTimeline.after3s.rawQuota;
+    }
+
+    // Step 4: Wait 7 more seconds (total 10s)
+    onProgress?.({ step: 'waiting_10s', ...getDiagnosisProgressMessage('waiting_10s') });
+    await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_10S - SETTLEMENT_DELAY_3S));
+    report.rawQuotaTimeline.after10s = await requestRawQuotaFromTab(tabId);
+    if (report.rawQuotaTimeline.after10s && report.rawQuotaTimeline.before) {
+      report.rawQuotaTimeline.delta10s = report.rawQuotaTimeline.before.rawQuota - report.rawQuotaTimeline.after10s.rawQuota;
+    }
+
+    // Generate report
+    onProgress?.({ step: 'generating_report', ...getDiagnosisProgressMessage('generating_report') });
+
+    // Store invalid model test result
+    report.invalidModelTest = {
+      key: 'invalid_model_charge',
+      title: 'Invalid Model Test',
+      status: invalidResponseInfo.httpStatus >= 400 ? 'not_found' : 'needs_review',
+      confirmed: false,
+      highRisk: false,
+      httpStatus: invalidResponseInfo.httpStatus,
+      outputSignal: createEmptyOutputSignal(),
+      message: `HTTP ${invalidResponseInfo.httpStatus}: Invalid model test completed`,
+      suggestion: '',
+    };
+
+    // Step 5: Baseline test with valid model
+    let baselineResponse: Response;
+    let baselineResponseInfo = {
+      httpStatus: 0,
+      error: false,
+      visibleText: '',
+      completionTokens: 0,
+      totalTokens: 0,
+      hasToolCall: false,
+      hasImage: false,
+      hasAudio: false,
+      hasSearch: false,
+    };
+
+    try {
+      baselineResponse = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: 'user', content: '只回复一个字：1' }],
+          max_tokens: 5,
+          temperature: 0,
+          stream: false,
+        }),
+      });
+
+      baselineResponseInfo.httpStatus = baselineResponse.status;
+      const responseText = await baselineResponse.text();
+
+      try {
+        const data = JSON.parse(responseText);
+        baselineResponseInfo.visibleText = data.choices?.[0]?.message?.content || '';
+        baselineResponseInfo.completionTokens = data.usage?.completion_tokens || 0;
+        baselineResponseInfo.totalTokens = data.usage?.total_tokens || 0;
+        baselineResponseInfo.hasToolCall = !!(data.choices?.[0]?.message?.tool_calls);
+        baselineResponseInfo.hasImage = !!(data.choices?.[0]?.message?.image_url);
+        baselineResponseInfo.error = !!data.error;
+      } catch {
+        baselineResponseInfo.error = true;
+      }
+    } catch (err) {
+      baselineResponseInfo.error = true;
+    }
+
+    report.baselineTest = {
+      key: 'baseline_test',
+      title: 'Baseline Test',
+      status: baselineResponseInfo.httpStatus === 200 && !baselineResponseInfo.error ? 'not_found' : 'needs_review',
+      confirmed: false,
+      highRisk: false,
+      httpStatus: baselineResponseInfo.httpStatus,
+      outputSignal: createEmptyOutputSignal(),
+      message: `HTTP ${baselineResponseInfo.httpStatus}: Baseline test completed`,
+      suggestion: '',
+    };
+
+    // Final judgment based on invalid model test result
+    report.judgment = judgeBilling(report.rawQuotaTimeline, invalidResponseInfo);
+    report.status = report.judgment.level === 'bad' ? 'bad' : report.judgment.level === 'risk' ? 'risk' : 'ok';
+
+  } catch (err) {
+    report.judgment = {
+      level: 'risk',
+      title: 'Detection error',
+      titleZh: '检测出错',
+      detail: err instanceof Error ? err.message : 'Unknown error',
+      detailZh: err instanceof Error ? err.message : '未知错误',
+    };
+    report.status = 'risk';
+  }
+
+  report.finishedAt = new Date().toISOString();
+  return report;
+}
+

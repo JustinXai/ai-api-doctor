@@ -32,9 +32,11 @@ import {
   getLanguage,
   setLanguage,
   runBillingAnomalyProbes,
+  summarizeBillingAnomaly,
+  runBillingDiagnosis,
 } from '../../src/lib/storage';
 import { t, resolveLanguage, Language } from '../../src/lib/i18n';
-import type { ActiveConfig, DiagnosisReport, CostAuditConfig, CostAuditResult, BillingAnomalyReport, BillingProbeResult, BalanceSnapshot } from '../../src/types';
+import type { ActiveConfig, DiagnosisReport, CostAuditConfig, CostAuditResult, BillingAnomalyReport, BillingProbeResult, BalanceSnapshot, BillingAnomalySummary, BillingDiagnosisReport, DiagnosisProgress } from '../../src/types';
 
 // ─── Language Context ──────────────────────────────────────
 
@@ -126,11 +128,21 @@ interface TrustScoreNew {
   confidence: 'high' | 'medium' | 'low';
   categories: TrustScoreCategoryNew[];
   riskTags: string[];
+  billingSummary: BillingAnomalySummary;
+  overallLabel: string;
+  overallLabelZh: string;
+  mainIssue: string;
+  mainIssueZh: string;
+  suggestion: string;
+  suggestionZh: string;
 }
 
-function calculateTrustScore(report: DiagnosisReport, lang: 'zh-CN' | 'en-US'): TrustScoreNew {
+function calculateTrustScore(report: DiagnosisReport): TrustScoreNew {
   const categories: TrustScoreCategoryNew[] = [];
   const riskTags: string[] = [];
+
+  // Use summarizeBillingAnomaly for billing summary
+  const billingSummary = summarizeBillingAnomaly(report.billingAnomaly || { enabled: false }, !!report.activeModelId);
 
   // Access score (weight 15)
   const baseUrlStep = report.steps[0];
@@ -210,49 +222,25 @@ function calculateTrustScore(report: DiagnosisReport, lang: 'zh-CN' | 'en-US'): 
     status: execStatus,
   });
 
-  // Billing score (weight 35) - includes usage + anomaly probes
+  // Billing score (weight 35) - uses summarizeBillingAnomaly result
   let billingScore = 80;
   let billingStatusType: 'success' | 'warning' | 'error' | 'skipped' = 'success';
-  let hasConfirmedAnomaly = false;
-  let hasNeedsReviewAnomaly = false;
-  let billingProbeStatus: TrustScoreNew['billingStatus'] = 'not_tested';
 
-  const emptyProbe = report.billingAnomaly?.emptyReplyProbe;
-  const failedProbe = report.billingAnomaly?.failedRequestProbe;
-
-  if (emptyProbe?.status === 'signal_confirmed' || failedProbe?.status === 'signal_confirmed') {
+  if (billingSummary.status === 'signal_confirmed') {
     billingScore = 0;
     billingStatusType = 'error';
-    hasConfirmedAnomaly = true;
-    billingProbeStatus = 'signal_confirmed';
-    if (emptyProbe?.status === 'signal_confirmed') {
-      riskTags.push('EMPTY_REPLY_CHARGE_CONFIRMED');
-    }
-    if (failedProbe?.status === 'signal_confirmed') {
-      riskTags.push('FAILED_REQUEST_CHARGE_CONFIRMED');
-    }
-  } else if (emptyProbe?.status === 'needs_review' || failedProbe?.status === 'needs_review') {
+  } else if (billingSummary.status === 'needs_review') {
     billingScore = 40;
     billingStatusType = 'warning';
-    hasNeedsReviewAnomaly = true;
-    billingProbeStatus = 'needs_review';
-    if (emptyProbe?.status === 'needs_review') {
-      riskTags.push('EMPTY_REPLY_CHARGE_REVIEW');
-    }
-    if (failedProbe?.status === 'needs_review') {
-      riskTags.push('FAILED_REQUEST_CHARGE_REVIEW');
-    }
-    if (!report.billingAnomaly?.balanceSnapshot?.supported) {
-      riskTags.push('BALANCE_UNAVAILABLE');
-    }
+  } else if (billingSummary.status === 'not_found') {
+    billingScore = 90;
+    billingStatusType = 'success';
   } else if (!report.usageSummary) {
     billingScore = 45;
     billingStatusType = 'skipped';
-    billingProbeStatus = 'not_tested';
   } else if (report.usageSummary.status === 'available') {
     billingScore = 90;
     billingStatusType = 'success';
-    billingProbeStatus = 'not_found';
     if (report.usageSummary.totalTokens && report.usageSummary.totalTokens > 50000) {
       billingScore = 75;
       billingStatusType = 'warning';
@@ -261,13 +249,9 @@ function calculateTrustScore(report: DiagnosisReport, lang: 'zh-CN' | 'en-US'): 
   } else if (report.usageSummary.status === 'missing') {
     billingScore = 55;
     billingStatusType = 'warning';
-    billingProbeStatus = 'needs_review';
-    riskTags.push('USAGE_NOT_REPORTED');
   } else if (report.usageSummary.status === 'anomaly') {
     billingScore = 35;
     billingStatusType = 'error';
-    billingProbeStatus = 'needs_review';
-    riskTags.push('USAGE_ANOMALY');
   }
 
   categories.push({
@@ -350,9 +334,9 @@ function calculateTrustScore(report: DiagnosisReport, lang: 'zh-CN' | 'en-US'): 
   );
 
   // If billing anomaly confirmed, max score is 60
-  if (hasConfirmedAnomaly) {
+  if (billingSummary.status === 'signal_confirmed') {
     totalScore = Math.min(totalScore, 60);
-  } else if (hasNeedsReviewAnomaly) {
+  } else if (billingSummary.status === 'needs_review') {
     totalScore = Math.min(totalScore, 75);
   }
 
@@ -364,90 +348,24 @@ function calculateTrustScore(report: DiagnosisReport, lang: 'zh-CN' | 'en-US'): 
   } else if (skippedCount >= 3) {
     confidence = 'low';
   }
-  if (hasConfirmedAnomaly && report.billingAnomaly?.balanceSnapshot?.supported) {
+  if (billingSummary.status === 'signal_confirmed' && report.billingAnomaly?.balanceSnapshot?.supported) {
     confidence = 'high';
-  } else if (hasConfirmedAnomaly && !report.billingAnomaly?.balanceSnapshot?.supported) {
+  } else if (billingSummary.status === 'signal_confirmed' && !report.billingAnomaly?.balanceSnapshot?.supported) {
     confidence = 'medium';
-  }
-
-  // Determine overall label and main issue based on billing status
-  let overallLabel = '';
-  let overallLabelZh = '';
-  let mainIssue = '';
-  let mainIssueZh = '';
-  let suggestion = '';
-  let suggestionZh = '';
-
-  if (hasConfirmedAnomaly) {
-    overallLabel = 'Billing signal confirmed';
-    overallLabelZh = '扣费异常信号已确认';
-    mainIssue = 'Billing anomaly signal confirmed';
-    mainIssueZh = '扣费异常信号已确认';
-    suggestion = 'This test found a reproducible signal: no effective output or failed request with balance decrease. Contact your provider to review logs or refund.';
-    suggestionZh = '本次测试出现"无有效输出/请求失败 + 余额减少"的可复现信号。建议联系站长核对消费日志或退款。';
-  } else if (hasNeedsReviewAnomaly) {
-    overallLabel = 'Billing risk needs review';
-    overallLabelZh = '扣费风险需复查';
-    mainIssue = 'Billing result needs review';
-    mainIssueZh = '扣费结果需复查';
-    suggestion = 'This test found billing risk signals, but balance could not be confirmed. Check provider dashboard or logs.';
-    suggestionZh = '本次测试发现扣费风险信号，但余额无法自动确认。请结合站点后台消费记录核对。';
-  } else if (!report.billingAnomaly?.enabled) {
-    overallLabel = 'Ready';
-    overallLabelZh = '可用';
-    mainIssue = 'Billing anomaly probes not enabled';
-    mainIssueZh = '未开启扣费异常检测';
-    suggestion = 'This test only ran basic API diagnosis. Enable billing anomaly probes to check empty-reply and failed-request billing risks.';
-    suggestionZh = '本次仅完成基础调用诊断。开启扣费异常检测后，可以检查空回复扣费和失败请求扣费风险。';
-  } else if (!report.activeModelId) {
-    overallLabel = 'Needs review';
-    overallLabelZh = '需要复查';
-    mainIssue = 'Model not selected';
-    mainIssueZh = '未选择模型';
-    suggestion = 'No model selected. Chat completion cannot be verified. Enter a model ID and run diagnosis again.';
-    suggestionZh = '未选择模型，无法验证真实 chat/completions 调用。请填写模型 ID 后重新诊断。';
-  } else if (totalScore >= 85) {
-    overallLabel = 'Ready';
-    overallLabelZh = '可用';
-    mainIssue = 'No billing anomaly signal found';
-    mainIssueZh = '未发现扣费异常信号';
-    suggestion = 'This test did not find empty-reply or failed-request billing signals.';
-    suggestionZh = '本次测试未发现空回复扣费或失败请求扣费信号。';
-  } else if (totalScore >= 70) {
-    overallLabel = 'Needs review';
-    overallLabelZh = '需要复查';
-    mainIssue = 'Some issues need review';
-    mainIssueZh = '部分项目需复查';
-    suggestion = 'Some diagnostic items show warnings. Review the report for details.';
-    suggestionZh = '部分诊断项显示警告。请查看报告详情。';
-  } else if (totalScore >= 50) {
-    overallLabel = 'Risk found';
-    overallLabelZh = '存在风险';
-    mainIssue = 'Execution issues found';
-    mainIssueZh = '发现执行问题';
-    suggestion = 'Several diagnostic items failed or showed warnings. Review the report.';
-    suggestionZh = '多项诊断失败或显示警告。请查看报告。';
-  } else {
-    overallLabel = 'High risk';
-    overallLabelZh = '高风险';
-    mainIssue = 'Multiple critical issues';
-    mainIssueZh = '存在多个严重问题';
-    suggestion = 'Critical issues detected. Review the report for details.';
-    suggestionZh = '检测到严重问题。请查看报告详情。';
   }
 
   return {
     score: totalScore,
     confidence,
     categories,
-    riskTags: [...new Set(riskTags)],
-    billingStatus: billingProbeStatus,
-    overallLabel,
-    overallLabelZh,
-    mainIssue,
-    mainIssueZh,
-    suggestion,
-    suggestionZh,
+    riskTags: [...new Set([...riskTags, ...billingSummary.riskTags])],
+    billingSummary,
+    overallLabel: billingSummary.title,
+    overallLabelZh: billingSummary.titleZh,
+    mainIssue: billingSummary.title,
+    mainIssueZh: billingSummary.titleZh,
+    suggestion: billingSummary.message,
+    suggestionZh: billingSummary.messageZh,
   };
 }
 
@@ -506,6 +424,146 @@ function calculateCostAudit(
   }
 
   return result;
+}
+
+// ─── Simplified Billing Report ───────────────────────────────
+
+interface BillingReportCardProps {
+  report: BillingDiagnosisReport;
+  lang: 'zh-CN' | 'en-US';
+}
+
+function BillingReportCard({ report, lang }: BillingReportCardProps) {
+  const { t } = useLang();
+
+  // Status config based on judgment level
+  const statusConfig = {
+    ok: {
+      label: lang === 'zh-CN' ? '正常' : 'OK',
+      color: '#22C55E',
+      bgColor: 'rgba(34, 197, 94, 0.15)',
+    },
+    risk: {
+      label: lang === 'zh-CN' ? '风险' : 'RISK',
+      color: '#F59E0B',
+      bgColor: 'rgba(245, 158, 11, 0.15)',
+    },
+    bad: {
+      label: lang === 'zh-CN' ? '异常' : 'ANOMALY',
+      color: '#EF4444',
+      bgColor: 'rgba(239, 68, 68, 0.15)',
+    },
+    info: {
+      label: lang === 'zh-CN' ? '完成' : 'INFO',
+      color: '#64748B',
+      bgColor: 'rgba(100, 116, 139, 0.15)',
+    },
+  }[report.judgment.level] || statusConfig.info;
+
+  return (
+    <div className="billing-report-card">
+      {/* Header */}
+      <div className="billing-report-header">
+        <div className="billing-report-title">
+          {lang === 'zh-CN' ? '扣费检测结果' : 'Billing Detection Result'}
+        </div>
+        <div className="billing-report-status" style={{ backgroundColor: statusConfig.bgColor, color: statusConfig.color }}>
+          {statusConfig.label}
+        </div>
+      </div>
+
+      {/* Main Judgment */}
+      <div className="billing-judgment">
+        <div className="billing-judgment-title" style={{ color: statusConfig.color }}>
+          {lang === 'zh-CN' ? report.judgment.titleZh : report.judgment.title}
+        </div>
+        <div className="billing-judgment-detail">
+          {lang === 'zh-CN' ? report.judgment.detailZh : report.judgment.detail}
+        </div>
+      </div>
+
+      {/* Raw Quota Evidence Chain */}
+      {report.rawQuotaTimeline?.readable && (
+        <div className="billing-evidence-chain">
+          <div className="billing-evidence-title">
+            {lang === 'zh-CN' ? '原始额度证据链' : 'Raw Quota Evidence Chain'}
+          </div>
+          <div className="billing-evidence-flow">
+            <div className="billing-evidence-node">
+              <div className="billing-evidence-label">{lang === 'zh-CN' ? '检测前' : 'Before'}</div>
+              <div className="billing-evidence-value">{report.rawQuotaTimeline.before?.rawQuota.toLocaleString() ?? 'N/A'}</div>
+            </div>
+            <div className="billing-evidence-arrow">→</div>
+            <div className="billing-evidence-node">
+              <div className="billing-evidence-label">{lang === 'zh-CN' ? '测试请求' : 'Test Request'}</div>
+              <div className="billing-evidence-value">
+                {report.invalidModelTest?.httpStatus || '?'}
+              </div>
+            </div>
+            <div className="billing-evidence-arrow">→</div>
+            <div className="billing-evidence-node">
+              <div className="billing-evidence-label">{lang === 'zh-CN' ? '10 秒后' : 'After 10s'}</div>
+              <div className="billing-evidence-value">{report.rawQuotaTimeline.after10s?.rawQuota.toLocaleString() ?? 'N/A'}</div>
+            </div>
+          </div>
+          {report.rawQuotaTimeline.delta10s !== undefined && (
+            <div className="billing-evidence-delta">
+              {lang === 'zh-CN' ? '最终变化' : 'Final Delta'}: {report.rawQuotaTimeline.delta10s >= 0 ? '+' : ''}{report.rawQuotaTimeline.delta10s}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Test Results */}
+      <div className="billing-test-results">
+        {report.invalidModelTest && (
+          <div className="billing-test-item">
+            <div className="billing-test-label">{lang === 'zh-CN' ? '无效模型测试' : 'Invalid Model Test'}</div>
+            <div className="billing-test-value">HTTP {report.invalidModelTest.httpStatus || '?'}</div>
+          </div>
+        )}
+        {report.baselineTest && (
+          <div className="billing-test-item">
+            <div className="billing-test-label">{lang === 'zh-CN' ? '基线测试' : 'Baseline Test'}</div>
+            <div className="billing-test-value">HTTP {report.baselineTest.httpStatus || '?'}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Config Info */}
+      <div className="billing-config-info">
+        <div className="billing-config-row">
+          <span className="billing-config-label">Base URL:</span>
+          <span className="billing-config-value">{report.baseUrl}</span>
+        </div>
+        <div className="billing-config-row">
+          <span className="billing-config-label">{lang === 'zh-CN' ? '模型' : 'Model'}:</span>
+          <span className="billing-config-value">{report.activeModelId || 'N/A'}</span>
+        </div>
+        <div className="billing-config-row">
+          <span className="billing-config-label">{lang === 'zh-CN' ? '接口' : 'Interface'}:</span>
+          <span className="billing-config-value">OpenAI Chat</span>
+        </div>
+        <div className="billing-config-row">
+          <span className="billing-config-label">{lang === 'zh-CN' ? '时间' : 'Time'}:</span>
+          <span className="billing-config-value">{new Date(report.startedAt).toLocaleString()}</span>
+        </div>
+      </div>
+
+      {/* Safety Note */}
+      <div className="billing-safety-note">
+        {lang === 'zh-CN'
+          ? 'API Key 已脱敏。本报告只展示本次测试中的可复现信号，不证明服务商故意多扣费。'
+          : 'API Key is masked. This report only shows reproducible signals from this test and does not prove intentional overbilling.'}
+      </div>
+
+      {/* Footer */}
+      <div className="billing-report-footer">
+        <span>{lang === 'zh-CN' ? '由 AI API Doctor 生成' : 'Generated by AI API Doctor'}</span>
+        <span className="billing-report-url">aiapidoctor.com</span>
+      </div>
+    </div>
+  );
 }
 
 // ─── Report Card V2 — Dark Incident Scorecard ─────────────
@@ -954,6 +1012,129 @@ function ReportCardV2({
         </div>
       )}
 
+      {/* Export Mode Evidence Section - Only visible in export-mode */}
+      <div className="rc2-export-evidence">
+        <div className="rc2-export-title">
+          {lang === 'zh-CN' ? '详细证据 / Detailed Evidence' : 'Detailed Evidence'}
+        </div>
+        <div className="rc2-export-grid">
+          <div className="rc2-export-item">
+            <span className="rc2-export-label">{lang === 'zh-CN' ? 'Provider' : 'Provider'}</span>
+            <span className="rc2-export-value">{report.providerName}</span>
+          </div>
+          <div className="rc2-export-item">
+            <span className="rc2-export-label">Base URL</span>
+            <span className="rc2-export-value">{baseUrl}</span>
+          </div>
+          <div className="rc2-export-item">
+            <span className="rc2-export-label">Model</span>
+            <span className="rc2-export-value">{report.activeModelId || 'Not selected'}</span>
+          </div>
+          <div className="rc2-export-item">
+            <span className="rc2-export-label">{lang === 'zh-CN' ? '时间' : 'Time'}</span>
+            <span className="rc2-export-value">{new Date(report.startedAt).toLocaleString()}</span>
+          </div>
+        </div>
+
+        {report.billingAnomaly?.emptyReplyProbe && (
+          <>
+            <div className="rc2-export-subtitle">
+              {lang === 'zh-CN' ? '空回复扣费 / Empty Reply Charge' : 'Empty Reply Charge'}
+            </div>
+            <div className="rc2-export-grid">
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">HTTP</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.httpStatus || 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">Request ID</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.requestId || 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '可见输出' : 'Visible Output'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.outputSignal?.visibleText?.length ?? 0} chars</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">completion_tokens</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.outputSignal?.completionTokens ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">total_tokens</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.outputSignal?.totalTokens ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">hasToolCall</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.outputSignal?.hasToolCall ? 'Yes' : 'No'}</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        {report.billingAnomaly?.failedRequestProbe && (
+          <>
+            <div className="rc2-export-subtitle">
+              {lang === 'zh-CN' ? '失败请求扣费 / Failed Request Charge' : 'Failed Request Charge'}
+            </div>
+            <div className="rc2-export-grid">
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">HTTP</span>
+                <span className="rc2-export-value">{report.billingAnomaly.failedRequestProbe.httpStatus || 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">Request ID</span>
+                <span className="rc2-export-value">{report.billingAnomaly.failedRequestProbe.requestId || 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">Provider Message</span>
+                <span className="rc2-export-value">{report.billingAnomaly.failedRequestProbe.providerMessage || 'N/A'}</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        {report.billingAnomaly?.emptyReplyProbe?.balanceTimeline && (
+          <>
+            <div className="rc2-export-subtitle">
+              {lang === 'zh-CN' ? '余额时间线 / Balance Timeline' : 'Balance Timeline'}
+            </div>
+            <div className="rc2-export-grid">
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '余额来源' : 'Source'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.source || 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '诊断前余额' : 'Before'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.before?.available?.toFixed(6) ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '即时余额' : 'After Immediate'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.afterImmediate?.available?.toFixed(6) ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '结算后余额' : 'After Settled'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.afterSettled?.available?.toFixed(6) ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '即时差异' : 'Delta Immediate'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.deltaImmediate?.toFixed(6) ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '结算差异' : 'Delta Settled'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.deltaSettled?.toFixed(6) ?? 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">{lang === 'zh-CN' ? '状态' : 'Status'}</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.status || 'N/A'}</span>
+              </div>
+              <div className="rc2-export-item">
+                <span className="rc2-export-label">settlementDelay</span>
+                <span className="rc2-export-value">{report.billingAnomaly.emptyReplyProbe.balanceTimeline.settlementDelayMs || 'N/A'}ms</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Footer */}
       <div className="rc2-footer">
         <span>{lang === 'zh-CN' ? '由 AI API Doctor 生成' : 'Generated by AI API Doctor'}</span>
@@ -978,8 +1159,10 @@ function HomePage() {
   const [parseHint, setParseHint] = useState('');
   const [parseError, setParseError] = useState('');
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<DiagnosisProgress | null>(null);
   const [report, setReport] = useState<DiagnosisReport | null>(null);
-  const [copyState, setCopyState] = useState<'idle' | 'md' | 'issue' | 'text'>('idle');
+  const [billingReport, setBillingReport] = useState<BillingDiagnosisReport | null>(null);
+  const [copyState, setCopyState] = useState<'idle' | 'md' | 'issue' | 'text' | 'provider'>('idle');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [showGuide, setShowGuide] = useState(true);
   const [showExample, setShowExample] = useState(false);
@@ -1055,29 +1238,29 @@ function HomePage() {
     if (!config.baseUrl || !config.apiKey) return;
     setRunning(true);
     setReport(null);
+    setBillingReport(null);
+    setProgress(null);
+
     try {
       const next = { ...config, updatedAt: new Date().toISOString() };
       await saveActiveConfig(next);
-      const rep = await runDiagnosis(next);
 
-      // Run billing anomaly probes if enabled
-      if (billingAnomalyEnabled && next.baseUrl && next.apiKey) {
-        try {
-          const probesResult = await runBillingAnomalyProbes(
-            next.baseUrl,
-            next.apiKey,
-            next.modelId || '',
-            true,
-            costAuditInput.beforeBalance ? parseFloat(costAuditInput.beforeBalance) : undefined,
-            costAuditInput.afterBalance ? parseFloat(costAuditInput.afterBalance) : undefined
-          );
-          rep.billingAnomaly = probesResult;
-        } catch (probeErr) {
-          console.error('Billing anomaly probe error:', probeErr);
-        }
+      // Get current tab for content script communication
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) {
+        throw new Error('Cannot get current tab');
       }
 
-      setReport(rep);
+      // Run simplified billing diagnosis with progress callback
+      const billingRep = await runBillingDiagnosis(
+        next.baseUrl,
+        next.apiKey,
+        next.modelId || 'gpt-4o-mini',
+        tab.id,
+        (prog) => setProgress(prog)
+      );
+
+      setBillingReport(billingRep);
       setConfig(next);
 
       // Scroll to report after diagnosis
@@ -1092,8 +1275,43 @@ function HomePage() {
       console.error('Diagnosis error:', e);
     } finally {
       setRunning(false);
+      setProgress(null);
     }
-  }, [config, billingAnomalyEnabled, costAuditInput]);
+  }, [config]);
+
+  // Auto-detect current site origin from active tab
+  const handleDetectSite = useCallback(async () => {
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.url) {
+        setParseError(lang === 'zh-CN' ? '无法获取当前页面信息' : 'Cannot get current page info');
+        return;
+      }
+      // Check if it's an HTTP/HTTPS URL
+      if (!tab.url.startsWith('http://') && !tab.url.startsWith('https://')) {
+        setParseError(lang === 'zh-CN' ? '请先打开 New API / One API 控制台页面' : 'Please open the New API / One API console page first');
+        return;
+      }
+      try {
+        const url = new URL(tab.url);
+        const origin = url.origin;
+        // Default to {origin}/v1
+        const baseUrl = `${origin}/v1`;
+
+        setConfig(prev => ({
+          ...prev,
+          baseUrl,
+          providerName: prev.providerName || url.hostname,
+        }));
+        setParseHint(lang === 'zh-CN' ? '已从当前页面识别站点' : 'Site detected from current page');
+        setParseError('');
+      } catch (e) {
+        setParseError(lang === 'zh-CN' ? 'URL 解析失败' : 'URL parsing failed');
+      }
+    } catch (e) {
+      setParseError(lang === 'zh-CN' ? '获取页面信息失败' : 'Failed to get page info');
+    }
+  }, [lang]);
 
   const handleUseExample = useCallback(() => {
     setConfig({
@@ -1109,6 +1327,257 @@ function HomePage() {
     setReport(null);
   }, []);
 
+  // DEV helper: Generate mock reports for testing
+  const handleMockReport = useCallback((type: 'not_found' | 'needs_review' | 'signal_confirmed') => {
+    const mockReport: DiagnosisReport = {
+      providerName: 'Mock Provider',
+      baseUrl: 'https://mock.example.com/v1',
+      maskedKey: 'sk-mock****',
+      activeModelId: 'gpt-4o-mini',
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      overallStatus: type === 'signal_confirmed' ? 'error' : type === 'needs_review' ? 'warning' : 'success',
+      passedCount: type === 'signal_confirmed' ? 4 : type === 'needs_review' ? 5 : 7,
+      totalCount: 8,
+      steps: [
+        { key: 'base_url', title: 'Base URL', status: 'success', latencyMs: 50 },
+        { key: 'api_key', title: 'API Key', status: 'success', latencyMs: 30 },
+        { key: 'models', title: 'Models', status: 'success', latencyMs: 100, modelCount: 50 },
+        { key: 'model', title: 'Model', status: 'success', latencyMs: 20 },
+        { key: 'chat', title: 'Chat', status: type === 'signal_confirmed' ? 'warning' : 'success', latencyMs: 800, responseText: 'Hello!' },
+        { key: 'usage', title: 'Usage', status: 'success', latencyMs: 10 },
+        { key: 'audit', title: 'Audit', status: 'success', latencyMs: 50 },
+      ],
+      usageSummary: {
+        status: 'available',
+        promptTokens: 10,
+        completionTokens: type === 'signal_confirmed' ? 0 : 5,
+        totalTokens: type === 'signal_confirmed' ? 10 : 15,
+      },
+      billingAnomaly: {
+        enabled: true,
+        balanceSnapshot: {
+          supported: true,
+          source: 'newapi',
+          granted: 100,
+          used: 10,
+          available: type === 'signal_confirmed' ? 9.999 : 99.99,
+          unlimited: false,
+          precision: 6,
+        },
+        emptyReplyProbe: type === 'signal_confirmed' ? {
+          key: 'empty_reply_charge',
+          title: 'Empty Reply Charge',
+          status: 'signal_confirmed',
+          result: 'signal_confirmed',
+          confirmed: true,
+          highRisk: true,
+          httpStatus: 200,
+          streamStatus: 'done',
+          outputSignal: {
+            visibleText: '',
+            completionTokens: 0,
+            promptTokens: 10,
+            totalTokens: 10,
+            finishReason: 'stop',
+            stopReason: 'stop',
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            hasRefusal: false,
+            hasContentFilter: false,
+            hasErrorEvent: false,
+            hasAnyEffectiveOutput: false,
+          },
+          balanceTimeline: {
+            source: 'newapi',
+            before: { supported: true, source: 'newapi', available: 100, precision: 6 },
+            afterImmediate: { supported: true, source: 'newapi', available: 99.999 },
+            afterSettled: { supported: true, source: 'newapi', available: type === 'signal_confirmed' ? 99.999 : 100 },
+            deltaImmediate: type === 'signal_confirmed' ? -0.001 : 0,
+            deltaSettled: type === 'signal_confirmed' ? -0.001 : 0,
+            status: type === 'signal_confirmed' ? 'decreased' : 'available',
+            settlementDelayMs: 1500,
+          },
+          message: type === 'signal_confirmed' ? 'Empty reply with balance decrease detected' : 'No empty reply charge found',
+          suggestion: type === 'signal_confirmed' ? 'Contact provider to review logs' : 'No action needed',
+          evidence: {
+            visibleOutputLength: 0,
+            completionTokens: 0,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            balanceSource: 'newapi',
+            balanceDeltaImmediate: type === 'signal_confirmed' ? -0.001 : 0,
+            balanceDeltaSettled: type === 'signal_confirmed' ? -0.001 : 0,
+          },
+        } : type === 'needs_review' ? {
+          key: 'empty_reply_charge',
+          title: 'Empty Reply Charge',
+          status: 'needs_review',
+          result: 'needs_review',
+          confirmed: false,
+          highRisk: true,
+          httpStatus: 200,
+          streamStatus: 'done',
+          outputSignal: {
+            visibleText: '',
+            completionTokens: 0,
+            promptTokens: 10,
+            totalTokens: 10,
+            finishReason: 'stop',
+            stopReason: 'stop',
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            hasRefusal: false,
+            hasContentFilter: false,
+            hasErrorEvent: false,
+            hasAnyEffectiveOutput: false,
+          },
+          balanceTimeline: {
+            source: 'unsupported',
+            before: { supported: false, source: 'unsupported' },
+            afterImmediate: { supported: false, source: 'unsupported' },
+            afterSettled: { supported: false, source: 'unsupported' },
+            deltaImmediate: undefined,
+            deltaSettled: undefined,
+            status: 'not_available',
+            settlementDelayMs: 1500,
+          },
+          message: 'Empty reply detected but balance unavailable',
+          suggestion: 'Check provider dashboard for balance confirmation',
+          evidence: {
+            visibleOutputLength: 0,
+            completionTokens: 0,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            balanceSource: 'unsupported',
+          },
+        } : {
+          key: 'empty_reply_charge',
+          title: 'Empty Reply Charge',
+          status: 'not_found',
+          result: 'not_found',
+          confirmed: false,
+          highRisk: false,
+          httpStatus: 200,
+          streamStatus: 'done',
+          outputSignal: {
+            visibleText: 'Hello!',
+            completionTokens: 5,
+            promptTokens: 10,
+            totalTokens: 15,
+            finishReason: 'stop',
+            stopReason: 'stop',
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            hasRefusal: false,
+            hasContentFilter: false,
+            hasErrorEvent: false,
+            hasAnyEffectiveOutput: true,
+          },
+          message: 'No empty reply charge found',
+          suggestion: 'No action needed',
+          evidence: {
+            visibleOutputLength: 6,
+            completionTokens: 5,
+            totalTokens: 15,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            balanceSource: 'newapi',
+            balanceDeltaImmediate: 0,
+            balanceDeltaSettled: 0,
+          },
+        },
+        failedRequestProbe: type === 'not_found' ? {
+          key: 'failed_request_charge',
+          title: 'Failed Request Charge',
+          status: 'not_found',
+          result: 'not_found',
+          confirmed: false,
+          highRisk: false,
+          httpStatus: 404,
+          providerMessage: 'model not found',
+          outputSignal: {
+            visibleText: '',
+            completionTokens: 0,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            hasRefusal: false,
+            hasContentFilter: false,
+            hasErrorEvent: false,
+            hasAnyEffectiveOutput: false,
+          },
+          message: 'No failed request charge found',
+          suggestion: 'No action needed',
+          evidence: {
+            visibleOutputLength: 0,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            balanceSource: 'newapi',
+            balanceDeltaSettled: 0,
+          },
+        } : {
+          key: 'failed_request_charge',
+          title: 'Failed Request Charge',
+          status: 'needs_review',
+          result: 'needs_review',
+          confirmed: false,
+          highRisk: true,
+          httpStatus: 404,
+          providerMessage: 'model not found',
+          outputSignal: {
+            visibleText: '',
+            completionTokens: 0,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            hasRefusal: false,
+            hasContentFilter: false,
+            hasErrorEvent: false,
+            hasAnyEffectiveOutput: false,
+          },
+          balanceTimeline: {
+            source: 'unsupported',
+            before: { supported: false, source: 'unsupported' },
+            afterImmediate: { supported: false, source: 'unsupported' },
+            afterSettled: { supported: false, source: 'unsupported' },
+            status: 'not_available',
+            settlementDelayMs: 1500,
+          },
+          message: 'Request failed but balance unavailable',
+          suggestion: 'Check provider dashboard',
+          evidence: {
+            visibleOutputLength: 0,
+            hasToolCall: false,
+            hasImage: false,
+            hasAudio: false,
+            hasSearch: false,
+            balanceSource: 'unsupported',
+          },
+        },
+      },
+      totalLatencyMs: 1000,
+      totalTokens: type === 'signal_confirmed' ? 10 : 15,
+    };
+    setReport(mockReport);
+  }, []);
+
   const handleCopyMd = useCallback(async () => {
     if (!report) return;
     try {
@@ -1117,7 +1586,7 @@ function HomePage() {
       lines.push('');
 
       // Trust Score
-      const trustScore = calculateTrustScore(report, lang);
+      const trustScore = calculateTrustScore(report);
       lines.push(`**API Trust Score:** ${trustScore.score} / 100`);
       lines.push(`**Confidence:** ${trustScore.confidence}`);
       lines.push('');
@@ -1348,6 +1817,87 @@ function HomePage() {
     } catch { setCopyState('idle'); }
   }, [report, config, lang]);
 
+  const handleCopyForProvider = useCallback(async () => {
+    if (!billingReport) return;
+    try {
+      const lines: string[] = [];
+      const isZh = lang === 'zh-CN';
+      const timeline = billingReport.rawQuotaTimeline;
+
+      // Header
+      if (isZh) {
+        lines.push('AI API Doctor 扣费异常检测报告');
+      } else {
+        lines.push('AI API Doctor Billing Anomaly Report');
+      }
+      lines.push('');
+
+      // Conclusion
+      if (isZh) {
+        lines.push('结论: ' + billingReport.judgment.titleZh);
+        lines.push('说明: ' + billingReport.judgment.detailZh);
+      } else {
+        lines.push('Conclusion: ' + billingReport.judgment.title);
+        lines.push('Message: ' + billingReport.judgment.detail);
+      }
+      lines.push('');
+
+      // Config
+      lines.push(`Origin: ${new URL(billingReport.baseUrl).origin}`);
+      lines.push(`Base URL: ${billingReport.baseUrl}`);
+      lines.push(`Model: ${billingReport.activeModelId || 'N/A'}`);
+      lines.push(`Interface: OpenAI Chat`);
+      lines.push(`Time: ${new Date(billingReport.startedAt).toLocaleString()}`);
+      lines.push('');
+
+      // Raw Quota Timeline
+      if (timeline) {
+        if (isZh) {
+          lines.push('原始额度:');
+        } else {
+          lines.push('Raw Quota:');
+        }
+        lines.push(`- ${isZh ? '检测前' : 'Before'}: ${timeline.before?.rawQuota?.toLocaleString() ?? 'N/A'}`);
+        lines.push(`- ${isZh ? '请求后即时' : 'After Immediate'}: ${timeline.afterImmediate?.rawQuota?.toLocaleString() ?? 'N/A'}`);
+        lines.push(`- ${isZh ? '3 秒后' : 'After 3s'}: ${timeline.after3s?.rawQuota?.toLocaleString() ?? 'N/A'}`);
+        lines.push(`- ${isZh ? '10 秒后' : 'After 10s'}: ${timeline.after10s?.rawQuota?.toLocaleString() ?? 'N/A'}`);
+        if (timeline.delta10s !== undefined) {
+          lines.push(`- ${isZh ? '最终变化' : 'Final Delta'}: ${timeline.delta10s >= 0 ? '+' : ''}${timeline.delta10s}`);
+        }
+        lines.push('');
+      }
+
+      // Test Results
+      if (isZh) {
+        lines.push('测试结果:');
+      } else {
+        lines.push('Test Results:');
+      }
+      if (billingReport.invalidModelTest) {
+        lines.push(`- Invalid Model: HTTP ${billingReport.invalidModelTest.httpStatus || '?'}`);
+      }
+      if (billingReport.baselineTest) {
+        lines.push(`- Baseline: HTTP ${billingReport.baselineTest.httpStatus || '?'}`);
+      }
+      lines.push('');
+
+      // Safety
+      if (isZh) {
+        lines.push('安全说明:');
+        lines.push('API Key 已脱敏。本报告只展示本次测试中的可复现信号，不证明服务商故意多扣费。');
+      } else {
+        lines.push('Safety:');
+        lines.push('API Key is masked. This report only shows reproducible signals from this test and does not prove intentional overbilling.');
+      }
+      lines.push('');
+      lines.push('Generated by AI API Doctor · https://aiapidoctor.com');
+
+      await copyToClipboard(lines.join('\n'));
+      setCopyState('provider');
+      setTimeout(() => setCopyState('idle'), 2000);
+    } catch { setCopyState('idle'); }
+  }, [billingReport, lang]);
+
   const handleSaveImage = useCallback(async () => {
     if (!reportCardRef.current) return;
     setSaveState('saving');
@@ -1435,13 +1985,21 @@ function HomePage() {
             <span className="form-label">{t('baseUrl')}</span>
             <span className="form-label-tag required">{t('baseUrlRequired')}</span>
           </div>
-          <input
-            type="url"
-            className="form-input"
-            placeholder={t('baseUrlPlaceholder')}
-            value={config.baseUrl}
-            onChange={(e) => setConfig((p) => ({ ...p, baseUrl: e.target.value }))}
-          />
+          <div className="form-input-with-action">
+            <input
+              type="url"
+              className="form-input"
+              placeholder={t('baseUrlPlaceholder')}
+              value={config.baseUrl}
+              onChange={(e) => setConfig((p) => ({ ...p, baseUrl: e.target.value }))}
+            />
+            <button className="btn btn-ghost btn-sm" onClick={handleDetectSite}>
+              {t('detectFromSite')}
+            </button>
+          </div>
+          {parseHint && parseHint.includes('识别') || parseHint?.includes('detected') ? (
+            <div className="parse-hint">{parseHint}</div>
+          ) : null}
         </div>
 
         {/* API Key */}
@@ -1474,16 +2032,46 @@ function HomePage() {
           />
         </div>
 
+        {/* Interface Type - Simplified */}
+        <div className="form-group">
+          <div className="form-label-row">
+            <span className="form-label">{t('interfaceType')}</span>
+          </div>
+          <div className="interface-type-options">
+            <span className="interface-type-badge active">{t('interfaceTypeOpenAI')}</span>
+            <span className="interface-type-badge disabled">{t('interfaceTypeResponses')}</span>
+            <span className="interface-type-badge disabled">{t('interfaceTypeClaude')}</span>
+          </div>
+        </div>
+
         {/* Action Buttons */}
         <div className="form-actions">
-          <button className="btn btn-secondary" onClick={handleSave}>
-            {t('saveLocally')}
-          </button>
-          <button className="btn btn-primary" onClick={handleRun} disabled={running || !canRun}>
-            {running ? (
-              <><div className="btn-spinner" />{t('runningDiagnosis')}</>
-            ) : t('runDiagnosis')}
-          </button>
+          <div className="form-action-note">
+            {t('detectionNote')}
+          </div>
+          {running && progress && (
+            <div className="diagnosis-progress">
+              <div className="diagnosis-progress-bar">
+                <div
+                  className="diagnosis-progress-fill"
+                  style={{ width: `${progress.percent}%` }}
+                />
+              </div>
+              <div className="diagnosis-progress-text">
+                {lang === 'zh-CN' ? progress.messageZh : progress.message}
+              </div>
+            </div>
+          )}
+          <div className="form-action-buttons">
+            <button className="btn btn-secondary" onClick={handleSave}>
+              {t('saveLocally')}
+            </button>
+            <button className="btn btn-primary" onClick={handleRun} disabled={running || !canRun}>
+              {running ? (
+                <><div className="btn-spinner" />{t('runningDiagnosis')}</>
+              ) : t('runDiagnosis')}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1634,9 +2222,34 @@ function HomePage() {
                   : 'Enter a model ID to run billing anomaly probes.'}
               </div>
             )}
+            {billingAnomalyEnabled && config.modelId && (
+              <div className="cost-audit-hint">
+                {lang === 'zh-CN'
+                  ? '扣费异常检测会发送 2 次低成本真实请求，可能消耗少量额度。建议使用测试 Key。'
+                  : 'Billing anomaly probes send 2 low-cost real requests and may consume a small amount of credits. Use a test key.'}
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* DEV Mock Reports - Only visible in development */}
+      {import.meta.env.DEV && (
+        <div className="dev-mock-section">
+          <div className="dev-mock-title">Mock Reports (DEV)</div>
+          <div className="dev-mock-buttons">
+            <button className="btn btn-ghost btn-sm" onClick={() => handleMockReport('not_found')}>
+              Not Found
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => handleMockReport('needs_review')}>
+              Needs Review
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => handleMockReport('signal_confirmed')}>
+              Signal Confirmed
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Example Provider */}
       <div className="example-strip">
@@ -1649,9 +2262,43 @@ function HomePage() {
       </div>
       <div className="example-footnote">{t('exampleProviderBy')}</div>
 
-      {/* Report Card V2 */}
-      {report && (() => {
-        const trustScore = calculateTrustScore(report, lang);
+      {/* Billing Report Card - Simplified New API */}
+      {billingReport && (() => {
+        return (
+          <>
+            <div ref={reportCardRef}>
+              <BillingReportCard
+                report={billingReport}
+                lang={lang}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="report-actions">
+              <button
+                className={`report-btn ${copyState === 'provider' ? 'copied' : ''}`}
+                onClick={handleCopyForProvider}
+              >
+                {copyState === 'provider' ? t('copied') : t('copyForProvider')}
+              </button>
+              <button
+                className={`report-btn report-btn-save ${saveState === 'saving' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
+                onClick={handleSaveImage}
+                disabled={saveState === 'saving'}
+              >
+                {saveState === 'saving' ? t('savingImage') :
+                 saveState === 'saved' ? t('imageSaved') :
+                 saveState === 'failed' ? t('saveImageFailed') :
+                 t('saveImage')}
+              </button>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* Legacy Report Card V2 */}
+      {report && !billingReport && (() => {
+        const trustScore = calculateTrustScore(report);
         const costAudit = calculateCostAudit(report.usageSummary, config.costAudit);
         return (
           <>
@@ -1678,6 +2325,12 @@ function HomePage() {
                 onClick={handleCopyIssue}
               >
                 {copyState === 'issue' ? t('copied') : t('copyIssue')}
+              </button>
+              <button
+                className={`report-btn ${copyState === 'provider' ? 'copied' : ''}`}
+                onClick={handleCopyForProvider}
+              >
+                {copyState === 'provider' ? t('copied') : t('copyForProvider')}
               </button>
               <button
                 className={`report-btn ${copyState === 'text' ? 'copied' : ''}`}

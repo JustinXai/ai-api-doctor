@@ -1531,7 +1531,83 @@ body {
 
 .form-actions {
   display: flex;
-  gap: 5px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-action-note {
+  font-size: 10px;
+  color: var(--muted-light);
+  padding: 6px 10px;
+  background: rgba(56, 189, 248, 0.08);
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+
+.form-action-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.form-input-with-action {
+  display: flex;
+  gap: 6px;
+}
+
+.form-input-with-action .form-input {
+  flex: 1;
+}
+
+.interface-type-options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.interface-type-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.interface-type-badge.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.interface-type-badge.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Diagnosis Progress */
+.diagnosis-progress {
+  margin-bottom: 8px;
+}
+
+.diagnosis-progress-bar {
+  height: 4px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.diagnosis-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  transition: width 0.3s ease;
+}
+
+.diagnosis-progress-text {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 /* ============================================================
@@ -2012,6 +2088,38 @@ body {
   color: var(--muted-light);
   line-height: 1.4;
   margin-top: 2px;
+}
+
+/* DEV Mock Reports Section */
+.dev-mock-section {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px dashed rgba(139, 92, 246, 0.4);
+  border-radius: var(--radius-sm);
+}
+
+.dev-mock-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-bottom: 6px;
+}
+
+.dev-mock-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dev-mock-buttons .btn {
+  background: rgba(139, 92, 246, 0.2);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #a78bfa;
+}
+
+.dev-mock-buttons .btn:hover {
+  background: rgba(139, 92, 246, 0.3);
 }
 
 .btn-sm {
@@ -2661,6 +2769,16 @@ body {
   margin-top: 8px;
 }
 
+.cost-audit-hint {
+  font-size: 10px;
+  color: var(--accent);
+  background-color: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+}
+
 .cost-audit-advanced-toggle {
   display: flex;
   align-items: center;
@@ -2957,6 +3075,69 @@ body {
   font-size: 14px;
 }
 
+/* Export Evidence Section */
+.rc2-export-evidence {
+  display: none;
+  padding: 20px 28px;
+  border-top: 1px solid var(--report-border);
+  background: rgba(16, 24, 39, 0.5);
+}
+
+.report-card-v2.export-mode .rc2-export-evidence {
+  display: block;
+}
+
+.rc2-export-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--report-muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.rc2-export-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--report-text);
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: rgba(56, 189, 248, 0.1);
+  border-radius: 4px;
+  border-left: 3px solid var(--accent);
+}
+
+.rc2-export-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.rc2-export-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: rgba(16, 24, 39, 0.6);
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.rc2-export-label {
+  font-size: 10px;
+  color: var(--report-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.rc2-export-value {
+  font-size: 12px;
+  color: var(--report-text);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  word-break: break-all;
+}
+
 .report-card-v2.export-mode .rc2-footer {
   padding: 16px 32px;
   font-size: 14px;
@@ -3118,6 +3299,192 @@ body {
   border-color: #f87171;
   background-color: #450a0a;
   color: #f87171;
+}
+
+/* ============================================================
+   Billing Report Card (Simplified New API)
+   ============================================================ */
+
+.billing-report-card {
+  background: var(--report-bg);
+  border: 1px solid var(--report-border);
+  border-radius: 16px;
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+
+.billing-report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--report-border);
+}
+
+.billing-report-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--report-text);
+}
+
+.billing-report-status {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.billing-judgment {
+  padding: 24px 20px;
+  text-align: center;
+  border-bottom: 1px solid var(--report-border);
+}
+
+.billing-judgment-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.3px;
+}
+
+.billing-judgment-detail {
+  font-size: 12px;
+  color: var(--report-muted);
+  line-height: 1.5;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.billing-evidence-chain {
+  padding: 20px;
+  background: rgba(16, 24, 39, 0.5);
+  border-bottom: 1px solid var(--report-border);
+}
+
+.billing-evidence-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--report-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.billing-evidence-flow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.billing-evidence-node {
+  background: var(--report-panel);
+  border: 1px solid var(--report-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: center;
+  min-width: 100px;
+}
+
+.billing-evidence-label {
+  font-size: 9px;
+  color: var(--report-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+
+.billing-evidence-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--report-text);
+  font-family: var(--font-mono);
+}
+
+.billing-evidence-arrow {
+  font-size: 16px;
+  color: var(--report-muted);
+}
+
+.billing-evidence-delta {
+  text-align: center;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--report-muted);
+}
+
+.billing-test-results {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--report-border);
+}
+
+.billing-test-item {
+  flex: 1;
+  background: var(--report-panel);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.billing-test-label {
+  font-size: 9px;
+  color: var(--report-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.billing-test-value {
+  font-size: 12px;
+  color: var(--report-text);
+  font-family: var(--font-mono);
+}
+
+.billing-config-info {
+  padding: 16px 20px;
+  background: var(--report-panel);
+}
+
+.billing-config-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 4px 0;
+}
+
+.billing-config-label {
+  color: var(--report-muted);
+}
+
+.billing-config-value {
+  color: var(--report-text);
+  font-family: var(--font-mono);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.billing-safety-note {
+  padding: 12px 20px;
+  font-size: 10px;
+  color: var(--report-muted);
+  background: rgba(16, 24, 39, 0.5);
+  line-height: 1.5;
+}
+
+.billing-report-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 20px;
+  font-size: 10px;
+  color: var(--report-muted);
+  border-top: 1px solid var(--report-border);
+}
+
+.billing-report-url {
+  font-family: var(--font-mono);
 }
 
 /* ============================================================

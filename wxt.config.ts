@@ -7,7 +7,7 @@ export default defineConfig({
     name: '__MSG_extensionName__',
     description: '__MSG_extensionDescription__',
     default_locale: 'en',
-    permissions: ['storage', 'clipboardWrite'],
+    permissions: ['storage', 'clipboardWrite', 'activeTab', 'scripting'],
     host_permissions: ['https://api1.link-ai.cc/*'],
     optional_host_permissions: ['https://*/*', 'http://*/*'],
   },

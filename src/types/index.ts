@@ -177,9 +177,51 @@ export interface CostAuditResult {
   status: 'ok' | 'review' | 'high-diff' | 'unavailable';
 }
 
+// ─── Raw Quota (New API / One API) ────────────────────────
+
+export interface RawQuotaBalance {
+  userId: string;
+  rawQuota: number;
+  quotaPerUnit: number;
+  usdBalance: number;
+  usedQuota: number;
+  requestCount: number;
+  timestamp: number;
+}
+
+export interface RawQuotaTimeline {
+  before?: RawQuotaBalance;
+  afterImmediate?: RawQuotaBalance;
+  after3s?: RawQuotaBalance;
+  after10s?: RawQuotaBalance;
+  delta3s?: number;
+  delta10s?: number;
+  readable: boolean;
+  error?: string;
+}
+
+export type BillingJudgmentCode =
+  | 'failed_request_not_charged'
+  | 'precharge_refunded'
+  | 'raw_quota_unavailable'
+  | 'failed_request_charged'
+  | 'empty_response_charged'
+  | 'completed';
+
+export type BillingJudgmentLevel = 'ok' | 'bad' | 'risk' | 'info';
+
+export interface BillingJudgment {
+  code: BillingJudgmentCode;
+  level: BillingJudgmentLevel;
+  title: string;
+  titleZh: string;
+  detail: string;
+  detailZh: string;
+}
+
 // ─── Billing Anomaly Probes ────────────────────────────────
 
-export type BalanceSnapshotSource = 'newapi' | 'manual' | 'unsupported';
+export type BalanceSnapshotSource = 'newapi' | 'manual' | 'unsupported' | 'unlimited';
 
 export interface BalanceSnapshot {
   supported: boolean;
@@ -188,37 +230,90 @@ export interface BalanceSnapshot {
   used?: number;
   available?: number;
   unlimited?: boolean;
+  precision?: number;
   raw?: unknown;
   error?: string;
 }
 
-export type BillingProbeKey = 'empty_reply_charge' | 'failed_request_charge';
+export type BalanceTimelineStatus =
+  | 'not_available'
+  | 'available'
+  | 'unlimited'
+  | 'precision_limited'
+  | 'precharge_refunded'
+  | 'decreased'
+  | 'incomplete';
 
-export type BillingProbeStatus = 'not_tested' | 'skipped' | 'not_found' | 'needs_review' | 'signal_confirmed';
+export interface BalanceTimeline {
+  before?: BalanceSnapshot;
+  afterImmediate?: BalanceSnapshot;
+  afterSettled?: BalanceSnapshot;
+  beforeValue?: number;
+  afterImmediateValue?: number;
+  afterSettledValue?: number;
+  deltaImmediate?: number;
+  deltaSettled?: number;
+  settlementDelayMs: number;
+  source: 'newapi' | 'manual' | 'unsupported' | 'unlimited';
+  status: BalanceTimelineStatus;
+}
 
-export interface BillingProbeResult {
-  key: BillingProbeKey;
-  title: string;
-  status: BillingProbeStatus;
-  confirmed: boolean;
-  highRisk: boolean;
-  httpStatus?: number;
-  requestId?: string;
-  streamStatus?: 'done' | 'eof' | 'error' | 'aborted' | 'unknown';
+export interface OutputSignal {
+  visibleText: string;
   visibleOutputLength: number;
   completionTokens?: number;
   promptTokens?: number;
   totalTokens?: number;
+  finishReason?: string;
+  stopReason?: string;
   hasToolCall: boolean;
   hasImage: boolean;
   hasAudio: boolean;
   hasSearch: boolean;
+  hasRefusal: boolean;
+  hasContentFilter: boolean;
+  hasErrorEvent: boolean;
+  hasAnyEffectiveOutput: boolean;
+}
+
+export type BillingProbeKey = 'empty_reply_charge' | 'failed_request_charge';
+
+export type BillingProbeResultStatus = 'not_tested' | 'skipped' | 'not_found' | 'needs_review' | 'signal_confirmed';
+
+export interface BillingProbeResult {
+  key: BillingProbeKey;
+  title: string;
+  status: BillingProbeResultStatus;
+  confirmed: boolean;
+  highRisk: boolean;
+
+  httpStatus?: number;
+  requestId?: string;
+  endpoint?: string;
+  model?: string;
+
+  streamStatus?: 'done' | 'eof' | 'error' | 'aborted' | 'unknown';
+  providerMessage?: string;
+
+  outputSignal: OutputSignal;
+  balanceTimeline?: BalanceTimeline;
+
+  message: string;
+  suggestion: string;
+
+  // Legacy compatibility
+  visibleOutputLength?: number;
+  completionTokens?: number;
+  promptTokens?: number;
+  totalTokens?: number;
+  hasToolCall?: boolean;
+  hasImage?: boolean;
+  hasAudio?: boolean;
+  hasSearch?: boolean;
   balanceSource?: 'newapi' | 'manual' | 'unavailable';
   beforeBalance?: number;
   afterBalance?: number;
   balanceDelta?: number;
-  message: string;
-  suggestion: string;
 }
 
 export interface BillingAnomalyReport {
@@ -226,6 +321,64 @@ export interface BillingAnomalyReport {
   balanceSnapshot?: BalanceSnapshot;
   emptyReplyProbe?: BillingProbeResult;
   failedRequestProbe?: BillingProbeResult;
+}
+
+export type BillingAnomalySummaryStatus =
+  | 'not_enabled'
+  | 'not_found'
+  | 'needs_review'
+  | 'signal_confirmed'
+  | 'not_tested';
+
+export interface BillingAnomalySummary {
+  status: BillingAnomalySummaryStatus;
+  title: string;
+  titleZh: string;
+  message: string;
+  messageZh: string;
+  riskTags: string[];
+  severity: 'success' | 'warning' | 'error' | 'skipped';
+}
+
+// ─── Simplified Billing Diagnosis Report ───────────────────
+
+export type DiagnosisProgressStep =
+  | 'idle'
+  | 'reading_before'
+  | 'sending_request'
+  | 'reading_after'
+  | 'waiting_3s'
+  | 'waiting_10s'
+  | 'generating_report';
+
+export interface DiagnosisProgress {
+  step: DiagnosisProgressStep;
+  message: string;
+  messageZh: string;
+  percent: number;
+}
+
+export interface BillingDiagnosisReport {
+  providerName: string;
+  maskedKey: string;
+  activeModelId: string;
+  baseUrl: string;
+  startedAt: string;
+  finishedAt: string;
+
+  // Test results
+  invalidModelTest?: BillingProbeResult;
+  baselineTest?: BillingProbeResult;
+  failedRequestTest?: BillingProbeResult;
+
+  // Raw quota timeline
+  rawQuotaTimeline?: RawQuotaTimeline;
+
+  // Final judgment
+  judgment: BillingJudgment;
+
+  // Summary
+  status: 'ok' | 'risk' | 'bad';
 }
 
 // ─── Legacy / Compatibility ────────────────────────────────

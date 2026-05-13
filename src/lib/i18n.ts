@@ -21,6 +21,7 @@ export const en = {
   // App
   appTitle: 'AI API Doctor',
   version: 'v0.2',
+  appTagline: 'Optimized for New API / One API compatible relay sites.',
 
   // Permission
   permissionDenied: 'The browser has not granted access to this API host. Run diagnosis again and allow access to continue.',
@@ -43,6 +44,8 @@ export const en = {
   baseUrl: 'Base URL',
   baseUrlRequired: 'Required',
   baseUrlPlaceholder: 'https://api.example.com/v1',
+  detectFromSite: 'Detect from current site',
+  detectedFromSite: 'Site detected from current page',
   apiKey: 'API Key',
   apiKeyRequired: 'Required',
   apiKeyPlaceholder: 'sk-...',
@@ -50,9 +53,17 @@ export const en = {
   modelIdOptional: 'Optional but recommended',
   modelIdPlaceholder: 'gpt-4o, deepseek-chat, claude-opus-4.7',
   modelIdRecommended: 'Recommended',
+  interfaceType: 'Interface Type',
+  interfaceTypeOpenAI: 'OpenAI Chat',
+  interfaceTypeResponses: 'Responses (Coming soon)',
+  interfaceTypeClaude: 'Claude Messages (Coming soon)',
+  detectionMode: 'Detection Mode',
+  detectionModeStandard: 'Standard (1 round)',
+  detectionModeEnhanced: 'Enhanced (Coming soon)',
   saveLocally: 'Save Locally',
-  runDiagnosis: 'Run Diagnosis',
-  runningDiagnosis: 'Running Diagnosis…',
+  runDiagnosis: 'Start Detection',
+  runningDiagnosis: 'Running Detection…',
+  detectionNote: 'This test takes ~10 seconds and sends low-cost real requests. Use a test key.',
   loading: 'Loading…',
 
   // Parse feedback
@@ -248,6 +259,7 @@ export const en = {
   copyMarkdown: 'Copy Markdown',
   copyIssue: 'Copy Issue',
   copyResultText: 'Copy Result Text',
+  copyForProvider: 'Copy Report',
   copied: 'Copied!',
   copyFailed: 'Copy failed',
 
@@ -319,6 +331,7 @@ export const zh: Translations = {
   // App
   appTitle: 'AI API 诊断助手',
   version: 'v0.2',
+  appTagline: '优先支持 New API / One API 兼容站点的扣费异常检测',
 
   // Permission
   permissionDenied: '浏览器未授权访问该 API 域名，无法发起诊断请求。你可以重新运行诊断并允许访问该域名。',
@@ -341,6 +354,8 @@ export const zh: Translations = {
   baseUrl: 'Base URL',
   baseUrlRequired: '必填',
   baseUrlPlaceholder: 'https://api.example.com/v1',
+  detectFromSite: '从当前页面识别',
+  detectedFromSite: '已从当前页面识别站点',
   apiKey: 'API Key',
   apiKeyRequired: '必填',
   apiKeyPlaceholder: 'sk-...',
@@ -348,9 +363,17 @@ export const zh: Translations = {
   modelIdOptional: '选填',
   modelIdRecommended: '建议填写',
   modelIdPlaceholder: 'gpt-4o, deepseek-chat, claude-opus-4.7',
+  interfaceType: '接口类型',
+  interfaceTypeOpenAI: 'OpenAI Chat',
+  interfaceTypeResponses: 'Responses（即将推出）',
+  interfaceTypeClaude: 'Claude Messages（即将推出）',
+  detectionMode: '检测模式',
+  detectionModeStandard: '标准检测（1 轮）',
+  detectionModeEnhanced: '增强检测（即将推出）',
   saveLocally: '保存到本地',
-  runDiagnosis: '开始诊断',
-  runningDiagnosis: '诊断进行中…',
+  runDiagnosis: '开始检测',
+  runningDiagnosis: '检测进行中…',
+  detectionNote: '检测约需 10 秒，会发送低成本真实请求，可能消耗少量额度。建议使用测试 Key。',
   loading: '加载中…',
 
   // Parse feedback
@@ -546,6 +569,7 @@ export const zh: Translations = {
   copyMarkdown: '复制 Markdown',
   copyIssue: '复制 Issue',
   copyResultText: '复制结果文本',
+  copyForProvider: '复制报告',
   copied: '已复制！',
   copyFailed: '复制失败',
 
