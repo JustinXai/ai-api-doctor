@@ -44,8 +44,8 @@ export const en = {
   baseUrl: 'Base URL',
   baseUrlRequired: 'Required',
   baseUrlPlaceholder: 'https://api.example.com/v1',
-  detectFromSite: 'Detect from current site',
-  detectedFromSite: 'Site detected from current page',
+  detectFromSite: 'Use current page domain',
+  detectedFromSite: 'Domain filled from current page',
   apiKey: 'API Key',
   apiKeyRequired: 'Required',
   apiKeyPlaceholder: 'sk-...',
@@ -64,12 +64,84 @@ export const en = {
   runDiagnosis: 'Start Detection',
   runningDiagnosis: 'Running Detection…',
   detectionNote: 'This test takes ~10 seconds and sends low-cost real requests. Use a test key.',
+
+  // Detection options
+  billingAnomalyDetection: 'Billing Anomaly Detection',
+  billingAnomalyDetectionDesc: 'Sends invalid model test request and checks if raw quota decreases after 10 seconds.',
+  modelConnectivityDetection: 'Model connectivity test',
+  modelConnectivityDetectionDesc: 'Send a tiny request to verify API Key, Base URL and model are working. May cost a tiny amount.',
   loading: 'Loading…',
+
+  // Model connectivity results
+  modelConnectivityPassed: 'Model connectivity passed',
+  modelConnectivityReview: 'Model connectivity needs review',
+  modelConnectivityFailed: 'Model connectivity failed',
+  modelConnectivitySkipped: 'Not tested',
+
+  // Billing results
+  billingPassed: 'Passed',
+  billingRisk: 'Risk',
+  billingAnomaly: 'Anomaly',
+  billingUnavailable: 'Unavailable',
+
+  // Score
+  detectionScore: 'Detection Score',
+  detectionScoreDesc: 'Billing & Connectivity Score',
+
+  // Console verification states
+  consoleVerification: 'Console Verification',
+  consoleVerificationZh: '控制台验证',
+  consoleVerifyChecking: 'Verifying...',
+  consoleVerifyCheckingZh: '验证中...',
+  consoleVerifyVerified: 'Verified - can read raw quota',
+  consoleVerifyVerifiedZh: '已验证控制台，可读取 raw quota',
+  consoleVerifyNotNewApi: 'Not verified as New API / One API',
+  consoleVerifyNotNewApiZh: '未验证为 New API / One API',
+  consoleVerifyNotLoggedIn: 'Not logged in - cannot read quota',
+  consoleVerifyNotLoggedInZh: '未登录，无法读取用户额度',
+  consoleVerifyPermissionDenied: 'Browser not authorized',
+  consoleVerifyPermissionDeniedZh: '浏览器未授权',
+  consoleVerifyStatusTimeout: 'Cannot read /api/status',
+  consoleVerifyStatusTimeoutZh: '无法读取 /api/status，可能是站点无响应或浏览器未授权',
+  consoleVerifySelfTimeout: 'Cannot read /api/user/self',
+  consoleVerifySelfTimeoutZh: '无法读取 /api/user/self，可能是登录状态失效或接口无响应',
+  consoleVerifyOriginChanged: 'Console page changed',
+  consoleVerifyOriginChangedZh: '当前控制台页面已变化，请重新点击"填入当前页面域名"',
+  consoleVerifyTabUnavailable: 'Console tab unavailable',
+  consoleVerifyTabUnavailableZh: '原控制台标签页不可用，请重新打开控制台页面',
+  consoleVerifyFilled: 'Domain filled from current page',
+  consoleVerifyFilledZh: '已填入当前页面域名',
+  consoleVerifyPartial: 'Domain filled but not verified as New API / One API. You can manually modify Base URL; raw quota detection may not be available.',
+  consoleVerifyPartialZh: '已填入当前页面域名，但未验证为 New API / One API 控制台。可继续手动修改 Base URL；raw quota 精确检测可能不可用。',
+  consoleVerifyNeedsLogin: 'Site looks like New API / One API, but no logged-in user found. Please sign in to the console and try again.',
+  consoleVerifyNeedsLoginZh: '当前页面像 New API / One API，但未找到登录用户。请登录控制台后重试。',
+  consoleVerifyError: 'Unverified',
+  consoleVerifyErrorZh: '未验证',
+  consoleVerifyErrorHint: 'Only affects precise raw quota reading.',
+  consoleVerifyErrorHintZh: '说明：未验证为 New API / One API 控制台，仅影响 raw quota 精确读取。',
+  consoleVerifyVerifiedWithQuota: 'Verified - can read raw quota',
+  consoleVerifyVerifiedWithQuotaZh: '已读取 raw quota',
+  consoleVerifyNoQuotaBasicDone: 'Not verified - basic detection unaffected',
+  consoleVerifyNoQuotaBasicDoneZh: '未验证，不影响基础检测',
+
+  // Save success / models hint
+  saveLocallySuccess: '已保存。现在可以到"模型"页刷新模型列表。',
+  saveLocallySuccessEn: 'Saved. Now open the Models tab to refresh the model list.',
+
+  // Models page
+  modelsNeedSaveHint: '想自动选择模型？请先点击"保存到本地"，然后进入"模型"页刷新模型列表。',
+  modelsNeedSaveHintEn: 'Want to auto-select a model? Save the config locally first, then open the Models tab and refresh the model list.',
+  modelsConfigNotSaved: '检测到配置可能未保存，请先返回首页保存后再刷新模型。',
+  modelsConfigNotSavedEn: 'Config may not be saved. Please return to Home and save first, then refresh models.',
+  modelsNeedBaseUrl: '请先在首页保存 Base URL 和 API Key。',
+  modelsNeedBaseUrlEn: 'Please save Base URL and API Key on Home first.',
 
   // Parse feedback
   parsedOk: 'Parsed connection info locally.',
   parseFailed: 'Could not parse this input. Please fill fields manually.',
   urlHintMissingV1: 'This URL may be missing /v1. Suggested: {url}. You can edit it manually.',
+  notHttpPage: 'Please open New API / One API console or API site page.',
+  notHttpPageZh: '请打开 New API / One API 控制台或 API 站点页面。',
 
   // Example provider
   needExample: 'Need an example?',
@@ -266,6 +338,7 @@ export const en = {
   // Save Image
   saveImage: 'Save Image',
   savingImage: 'Saving…',
+  generatingImage: 'Generating image...',
   imageSaved: 'Saved',
   saveImageFailed: 'Save failed',
 
@@ -297,7 +370,7 @@ export const en = {
   connectivityOk: 'OK',
   active: 'Active',
   modelsNoConfigTitle: 'No Configuration',
-  modelsNoConfigDesc: 'Please enter Base URL and API Key on Home first.',
+  modelsNoConfigDesc: 'Please save Base URL and API Key on Home first.',
 
   // Export page
   export: 'Export',
@@ -323,6 +396,20 @@ export const en = {
   aboutTitle: 'About',
   aboutDescription: 'AI API Doctor is publicly built by @norike0718.',
   aboutDescription2: 'Link-AI is a sponsor and one of the example providers. AI API Doctor supports any OpenAI-compatible API, and the same diagnostic logic applies to every provider.',
+
+  // Clear local data
+  localDataTitle: 'Local Data',
+  localDataDesc: "AI API Doctor's configuration, reports and history are only saved in the current browser's local storage. Clearing will not affect your New API / One API account, balance, cookies, or provider backend data.",
+  clearLocalData: 'Clear Local Data',
+  confirmClearTitle: 'Confirm Clear Local Data?',
+  confirmClearDesc: "This will delete AI API Doctor's Base URL, API Key, model ID, diagnostic reports and cache stored in this browser. It will not clear your relay station account, balance or browser cookies.",
+  confirmClear: 'Confirm Clear',
+  localDataCleared: 'Local data cleared',
+
+  // Save image states
+  imageGenFailed: 'Image generation failed. Please use browser screenshot or copy report text.',
+  imageGenNodeMissing: 'Image generation failed: report node not found.',
+  saveImageSummary: 'Save Summary',
 };
 
 // ─── Chinese (Simplified) ─────────────────────────────────
@@ -354,8 +441,8 @@ export const zh: Translations = {
   baseUrl: 'Base URL',
   baseUrlRequired: '必填',
   baseUrlPlaceholder: 'https://api.example.com/v1',
-  detectFromSite: '从当前页面识别',
-  detectedFromSite: '已从当前页面识别站点',
+  detectFromSite: '填入当前页面域名',
+  detectedFromSite: '已填入当前页面域名',
   apiKey: 'API Key',
   apiKeyRequired: '必填',
   apiKeyPlaceholder: 'sk-...',
@@ -374,12 +461,85 @@ export const zh: Translations = {
   runDiagnosis: '开始检测',
   runningDiagnosis: '检测进行中…',
   detectionNote: '检测约需 10 秒，会发送低成本真实请求，可能消耗少量额度。建议使用测试 Key。',
+
+  // Detection options
+  billingAnomalyDetection: '默认检测：失败请求扣费检测',
+  billingAnomalyDetectionDesc: '发送无效模型测试请求，并在 10 秒后核对 raw quota 是否减少。',
+  modelConnectivityDetection: '模型联通检测',
+  modelConnectivityDetectionDesc: '会发送一次极小请求，用于确认 API Key、Base URL 和模型是否可用，可能产生极低成本。',
+  modelConnectivityTest: 'Model connectivity test',
+  modelConnectivityTestDesc: 'Send a tiny request to verify API Key, Base URL and model are working. May incur minimal cost.',
   loading: '加载中…',
+
+  // Model connectivity results
+  modelConnectivityPassed: '模型联通通过',
+  modelConnectivityReview: '模型联通需复查',
+  modelConnectivityFailed: '模型联通失败',
+  modelConnectivitySkipped: '未检测',
+
+  // Billing results
+  billingPassed: '通过',
+  billingRisk: '风险',
+  billingAnomaly: '异常',
+  billingUnavailable: '无法读取',
+
+  // Score
+  detectionScore: '本次检测分',
+  detectionScoreDesc: '扣费与联通检测分',
+
+  // Console verification states
+  consoleVerification: 'Console Verification',
+  consoleVerificationZh: '控制台验证',
+  consoleVerifyChecking: 'Verifying...',
+  consoleVerifyCheckingZh: '验证中...',
+  consoleVerifyVerified: 'Verified - can read raw quota',
+  consoleVerifyVerifiedZh: '已验证控制台，可读取 raw quota',
+  consoleVerifyNotNewApi: 'Not verified as New API / One API',
+  consoleVerifyNotNewApiZh: '未验证为 New API / One API',
+  consoleVerifyNotLoggedIn: 'Not logged in - cannot read quota',
+  consoleVerifyNotLoggedInZh: '未登录，无法读取用户额度',
+  consoleVerifyPermissionDenied: 'Browser not authorized',
+  consoleVerifyPermissionDeniedZh: '浏览器未授权',
+  consoleVerifyStatusTimeout: 'Cannot read /api/status',
+  consoleVerifyStatusTimeoutZh: '无法读取 /api/status，可能是站点无响应或浏览器未授权',
+  consoleVerifySelfTimeout: 'Cannot read /api/user/self',
+  consoleVerifySelfTimeoutZh: '无法读取 /api/user/self，可能是登录状态失效或接口无响应',
+  consoleVerifyOriginChanged: 'Console page changed',
+  consoleVerifyOriginChangedZh: '当前控制台页面已变化，请重新点击"填入当前页面域名"',
+  consoleVerifyTabUnavailable: 'Console tab unavailable',
+  consoleVerifyTabUnavailableZh: '原控制台标签页不可用，请重新打开控制台页面',
+  consoleVerifyFilled: 'Domain filled from current page',
+  consoleVerifyFilledZh: '已填入当前页面域名',
+  consoleVerifyPartial: 'Domain filled but not verified as New API / One API. You can manually modify Base URL; raw quota detection may not be available.',
+  consoleVerifyPartialZh: '已填入当前页面域名，但未验证为 New API / One API 控制台。可继续手动修改 Base URL；raw quota 精确检测可能不可用。',
+  consoleVerifyNeedsLogin: 'Site looks like New API / One API, but no logged-in user found. Please sign in to the console and try again.',
+  consoleVerifyNeedsLoginZh: '当前页面像 New API / One API，但未找到登录用户。请登录控制台后重试。',
+  consoleVerifyError: 'Unverified',
+  consoleVerifyErrorZh: '未验证',
+  consoleVerifyErrorHint: 'Only affects precise raw quota reading.',
+  consoleVerifyErrorHintZh: '说明：未验证为 New API / One API 控制台，仅影响 raw quota 精确读取。',
+  consoleVerifyVerifiedWithQuota: 'Verified - can read raw quota',
+  consoleVerifyVerifiedWithQuotaZh: '已读取 raw quota',
+  consoleVerifyNoQuotaBasicDone: 'Not verified - basic detection unaffected',
+  consoleVerifyNoQuotaBasicDoneZh: '未验证，不影响基础检测',
+
+  // Save success / models hint
+  saveLocallySuccess: '已保存。现在可以到"模型"页刷新模型列表。',
+  saveLocallySuccessEn: 'Saved. Now open the Models tab to refresh the model list.',
+
+  // Models page
+  modelsNeedSaveHint: '想自动选择模型？请先点击"保存到本地"，然后进入"模型"页刷新模型列表。',
+  modelsNeedSaveHintEn: 'Want to auto-select a model? Save the config locally first, then open the Models tab and refresh the model list.',
+  modelsConfigNotSaved: '检测到配置可能未保存，请先返回首页保存后再刷新模型。',
+  modelsConfigNotSavedEn: 'Config may not be saved. Please return to Home and save first, then refresh models.',
+  modelsNeedBaseUrl: '请先在首页保存 Base URL 和 API Key。',
+  modelsNeedBaseUrlEn: 'Please save Base URL and API Key on Home first.',
 
   // Parse feedback
   parsedOk: '已在本地解析连接信息。',
   parseFailed: '无法解析，请手动填写。',
   urlHintMissingV1: '看起来缺少 /v1，已建议使用 {url}，可手动修改。',
+  notHttpPage: '请打开 New API / One API 控制台或 API 站点页面。',
 
   // Example provider
   needExample: '需要示例？',
@@ -576,6 +736,7 @@ export const zh: Translations = {
   // Save Image
   saveImage: '保存图片',
   savingImage: '正在保存…',
+  generatingImage: '图片生成中，请稍等...',
   imageSaved: '已保存',
   saveImageFailed: '保存失败',
 
@@ -607,7 +768,7 @@ export const zh: Translations = {
   connectivityOk: '连接正常',
   active: '当前',
   modelsNoConfigTitle: '未配置',
-  modelsNoConfigDesc: '请先在首页填写 Base URL 和 API Key。',
+  modelsNoConfigDesc: '请先在首页保存 Base URL 和 API Key。',
 
   // Export page
   export: '导出',
@@ -633,6 +794,20 @@ export const zh: Translations = {
   aboutTitle: '关于',
   aboutDescription: 'AI API Doctor 由 @norike0718 发起并公开构建。',
   aboutDescription2: 'Link-AI 是项目赞助方和示例服务商之一。AI API Doctor 支持任何 OpenAI-compatible API，诊断逻辑不会因服务商不同而改变。',
+
+  // Clear local data
+  localDataTitle: '本地数据',
+  localDataDesc: 'AI API Doctor 的配置、报告和历史记录只保存在当前浏览器本地。清除后不会影响你的 New API / One API 账号、余额、Cookie 或服务商后台数据。',
+  clearLocalData: '清除本地信息',
+  confirmClearTitle: '确认清除本地信息？',
+  confirmClearDesc: '这会删除 AI API Doctor 保存在本浏览器中的 Base URL、API Key、模型 ID、检测报告和缓存状态。不会清除你的中转站账号、余额或浏览器 Cookie。',
+  confirmClear: '确认清除',
+  localDataCleared: '本地信息已清除',
+
+  // Save image states
+  imageGenFailed: '图片生成失败，请使用浏览器截图或复制报告文本。',
+  imageGenNodeMissing: '图片生成失败：报告节点不存在。',
+  saveImageSummary: '保存摘要图',
 };
 
 // ─── Dictionary map ────────────────────────────────────────

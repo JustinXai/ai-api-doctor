@@ -34,9 +34,373 @@ import {
   BillingDiagnosisReport,
   DiagnosisProgress,
   DiagnosisProgressStep,
+  BillingDiagnosisReport,
+  ModelConnectivityResult,
 } from '../types';
 import { DEFAULT_SETTINGS, EXAMPLE_PROVIDER } from './defaults';
 import { ensureHostPermission } from './permissions';
+
+// ─── Timeout Constants ─────────────────────────────────────────
+
+const TIMEOUT_STATUS_API = 5000;      // /api/status
+const TIMEOUT_USER_SELF = 5000;       // /api/user/self
+const TIMEOUT_RAW_QUOTA = 6000;       // Raw quota read
+const TIMEOUT_INVALID_REQUEST = 15000; // Invalid model request
+const TIMEOUT_BASELINE_REQUEST = 20000; // Baseline small request
+const TIMEOUT_DIAGNOSIS_GUARD = 35000; // Total diagnosis timeout
+
+// ─── Fetch with Timeout Helper ─────────────────────────────────
+
+interface FetchWithTimeoutOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+interface FetchError {
+  code: string;
+  message: string;
+}
+
+function isFetchError(obj: unknown): obj is FetchError {
+  return typeof obj === 'object' && obj !== null && 'code' in obj && 'message' in obj;
+}
+
+async function fetchWithTimeout<T = unknown>(
+  input: RequestInfo,
+  options: FetchWithTimeoutOptions = {}
+): Promise<{ success: true; data: T } | { success: false; error: FetchError }> {
+  const { timeoutMs = 10000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(input, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    // Try to parse JSON
+    const text = await response.text();
+    try {
+      const data = JSON.parse(text);
+      return { success: true, data: data as T };
+    } catch {
+      return { success: false, error: { code: 'INVALID_JSON', message: 'Response is not valid JSON' } };
+    }
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error) {
+      if (err.name === 'AbortError') {
+        return { success: false, error: { code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms` } };
+      }
+      return { success: false, error: { code: 'NETWORK_ERROR', message: err.message } };
+    }
+    return { success: false, error: { code: 'UNKNOWN_ERROR', message: 'Unknown error occurred' } };
+  }
+}
+
+/**
+ * Verify if a tab is a New API / One API console page
+ * Uses page context for proper CORS/cookie handling
+ * Uses origin (not baseUrl) to call APIs
+ */
+export async function verifyNewApiSite(
+  tabId: number,
+  origin: string
+): Promise<{
+  isNewApi: boolean;
+  userId?: string;
+  quotaPerUnit?: number;
+  quota?: number;
+  error?: string;
+}> {
+  // Step 1: Try messaging content script to get userId and verify
+  const messageTimeout = new Promise<{ userId?: string; error?: string }>((resolve) =>
+    setTimeout(() => resolve({ error: 'CONTENT_SCRIPT_TIMEOUT' }), 5000)
+  );
+
+  const messagePromise = (async () => {
+    try {
+      const response = await browser.tabs.sendMessage(tabId, { type: 'VERIFY_NEWAPI_SITE' });
+      if (response?.success && response?.data) {
+        return response.data as { userId?: string; error?: string };
+      }
+      return { error: 'CONTENT_SCRIPT_FAILED' };
+    } catch {
+      return { error: 'PERMISSION_DENIED' };
+    }
+  })();
+
+  try {
+    const userIdResult = await Promise.race([messagePromise, messageTimeout]);
+    const userId = userIdResult?.userId;
+
+    // Step 2: Try to verify using origin-based API calls
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'cache-control': 'no-store',
+    };
+    if (userId) {
+      headers['new-api-user'] = userId;
+    }
+
+    // Try /api/status first
+    let statusOk = false;
+    let quotaPerUnit: number | undefined;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const statusRes = await fetch(`${origin}/api/status`, {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (statusRes.ok) {
+        try {
+          const statusData = await statusRes.json();
+          if (statusData?.data) {
+            statusOk = true;
+            if (statusData.data.quota_per_unit) {
+              quotaPerUnit = Number(statusData.data.quota_per_unit);
+            }
+          }
+        } catch {
+          // Invalid JSON but response ok
+          statusOk = true;
+        }
+      }
+    } catch {
+      // /api/status failed
+    }
+
+    if (!statusOk) {
+      return { isNewApi: false, error: 'NOT_NEW_API' };
+    }
+
+    // Step 3: If userId exists, verify /api/user/self
+    if (!userId) {
+      return { isNewApi: true, error: 'USER_NOT_FOUND' };
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const selfRes = await fetch(`${origin}/api/user/self`, {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (selfRes.ok) {
+        try {
+          const selfData = await selfRes.json();
+          if (selfData?.data?.quota !== undefined) {
+            return {
+              isNewApi: true,
+              userId,
+              quotaPerUnit,
+              quota: Number(selfData.data.quota),
+            };
+          }
+        } catch {
+          // Invalid JSON
+        }
+      }
+
+      // Self API didn't return quota
+      return { isNewApi: true, userId, quotaPerUnit, error: 'QUOTA_FIELD_MISSING' };
+    } catch {
+      return { isNewApi: true, userId, quotaPerUnit, error: 'SELF_TIMEOUT' };
+    }
+  } catch {
+    return { isNewApi: false, error: 'UNKNOWN_ERROR' };
+  }
+}
+
+/**
+ * Run model connectivity test
+ * Sends a tiny request to verify API Key, Base URL and model are working
+ */
+export async function runModelConnectivityTest(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string
+): Promise<ModelConnectivityResult> {
+  const startTime = Date.now();
+
+  const result: ModelConnectivityResult = {
+    status: 'skipped',
+    hasError: false,
+    hasVisibleOutput: false,
+  };
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: 'user', content: '只回复一个字：1' }],
+        max_tokens: 5,
+        temperature: 0,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    result.latencyMs = Date.now() - startTime;
+    result.httpStatus = response.status;
+
+    const responseText = await response.text();
+
+    // Parse response
+    try {
+      const data = JSON.parse(responseText);
+      result.requestId = data.id;
+      result.visibleOutputLength = data.choices?.[0]?.message?.content?.length || 0;
+      result.completionTokens = data.usage?.completion_tokens;
+      result.totalTokens = data.usage?.total_tokens;
+      result.hasVisibleOutput = result.visibleOutputLength > 0;
+      result.hasError = !!data.error;
+      if (data.error) {
+        result.errorMessage = data.error.message || 'Unknown error';
+      }
+    } catch {
+      result.hasError = true;
+      result.errorMessage = 'Invalid JSON response';
+    }
+
+    // Determine status
+    if (result.httpStatus === 200 && result.hasVisibleOutput) {
+      result.status = 'passed';
+    } else if (result.httpStatus === 200 && !result.hasVisibleOutput) {
+      result.status = 'review';
+    } else {
+      result.status = 'failed';
+    }
+
+  } catch (err) {
+    result.hasError = true;
+    result.latencyMs = Date.now() - startTime;
+    if (err instanceof Error) {
+      if (err.name === 'AbortError') {
+        result.errorMessage = 'Request timeout';
+      } else {
+        result.errorMessage = err.message;
+      }
+    }
+    result.status = 'failed';
+  }
+
+  return result;
+}
+
+/**
+ * Calculate detection score based on billing and model connectivity results
+ */
+export function calculateDetectionScore(
+  billingStatus: BillingDiagnosisReport['status'],
+  rawQuotaReadable: boolean,
+  connectivityResult?: ModelConnectivityResult
+): number {
+  let score = 0;
+
+  // Billing score (0-70)
+  if (billingStatus === 'bad') {
+    score = 0;
+  } else if (billingStatus === 'ok') {
+    score = 70;
+  } else {
+    // risk or unavailable
+    score = rawQuotaReadable ? 40 : 40;
+  }
+
+  // Model connectivity score (0-30)
+  if (connectivityResult && connectivityResult.status !== 'skipped') {
+    switch (connectivityResult.status) {
+      case 'passed':
+        score += 30;
+        break;
+      case 'review':
+        score += 15;
+        break;
+      case 'failed':
+        // No points
+        break;
+    }
+  }
+
+  // Cap at 40 if billing is bad
+  if (billingStatus === 'bad') {
+    score = Math.min(score, 40);
+  }
+
+  return score;
+}
+
+/**
+ * Billing Reports Storage
+ */
+const BILLING_REPORTS_KEY = 'billingReports';
+
+export interface BillingReportsStorage {
+  [reportId: string]: BillingDiagnosisReport;
+}
+
+export async function getBillingReports(): Promise<BillingReportsStorage> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(BILLING_REPORTS_KEY, (result) => {
+      resolve(result[BILLING_REPORTS_KEY] || {});
+    });
+  });
+}
+
+export async function saveBillingReport(report: BillingDiagnosisReport): Promise<string> {
+  const reportId = `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const reports = await getBillingReports();
+  reports[reportId] = report;
+
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ [BILLING_REPORTS_KEY]: reports }, () => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve(reportId);
+      }
+    });
+  });
+}
+
+export async function getBillingReport(reportId: string): Promise<BillingDiagnosisReport | null> {
+  const reports = await getBillingReports();
+  return reports[reportId] || null;
+}
+
+export async function deleteBillingReport(reportId: string): Promise<void> {
+  const reports = await getBillingReports();
+  delete reports[reportId];
+
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [BILLING_REPORTS_KEY]: reports }, resolve);
+  });
+}
 
 // ─── Storage keys ────────────────────────────────────────────
 
@@ -321,9 +685,19 @@ export async function saveSettings(settings: ExtensionSettings): Promise<void> {
 }
 
 export async function clearAllLocalData(): Promise<void> {
-  return new Promise((resolve) => {
+  // Clear chrome.storage.local (all extension-scoped data)
+  await new Promise<void>((resolve) => {
     chrome.storage.local.clear(resolve);
   });
+  // Clear localStorage keys prefixed with aiapidoctor_
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('aiapidoctor_')) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
 }
 
 // ─── Language ──────────────────────────────────────────────
@@ -1726,81 +2100,140 @@ async function readUserIdFromPage(tabId: number): Promise<string | null> {
 }
 
 /**
- * Request raw quota balance from content script with fallback
+ * Request raw quota balance from content script with fallback and timeout
  */
 export async function requestRawQuotaFromTab(tabId: number): Promise<RawQuotaBalance | null> {
-  // Try messaging content script first
-  try {
-    const response = await browser.tabs.sendMessage(tabId, { type: 'GET_NEWAPI_RAW_BALANCE' });
-    if (response?.success && response?.data) {
-      return response.data as RawQuotaBalance;
-    }
-    // If content script exists but returned error, propagate
-    if (response?.error) {
+  // Try messaging content script first with timeout
+  const messageTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+
+  const messagePromise = (async () => {
+    try {
+      const response = await browser.tabs.sendMessage(tabId, { type: 'GET_NEWAPI_RAW_BALANCE' });
+      if (response?.success && response?.data) {
+        return response.data as RawQuotaBalance;
+      }
+      return null;
+    } catch {
       return null;
     }
+  })();
+
+  try {
+    const result = await Promise.race([messagePromise, messageTimeout]);
+    if (result) return result;
   } catch {
-    // Content script not available, fall through to executeScript
+    // Fall through to executeScript
   }
 
-  // Fallback: use scripting.executeScript
+  // Fallback: use scripting.executeScript with timeout
   try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: async () => {
-        try {
-          // Get userId
-          const userStr = localStorage.getItem('user') || '{}';
-          const user = JSON.parse(userStr);
-          const userId = String(user.id || '');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_RAW_QUOTA);
 
-          if (!userId) {
-            return { error: 'USER_NOT_FOUND' };
+    const results = await Promise.race([
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: async () => {
+          try {
+            // Get userId
+            const userStr = localStorage.getItem('user') || '{}';
+            const user = JSON.parse(userStr);
+            const userId = String(user.id || '');
+
+            if (!userId) {
+              return { error: 'USER_NOT_FOUND' };
+            }
+
+            const headers = {
+              'accept': 'application/json, text/plain, */*',
+              'cache-control': 'no-store',
+              'new-api-user': userId,
+            };
+
+            // Fetch with individual timeouts
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+
+            // Try multiple endpoints for compatibility
+            const statusEndpoints = ['/api/status', '/api/user/status', '/api/info'];
+            const userEndpoints = ['/api/user/self', '/api/user/info', '/api/user', '/api/profile'];
+
+            let statusData: any = {};
+            let selfData: any = {};
+            let quotaPerUnit = 500000;
+
+            // Try status endpoints
+            for (const endpoint of statusEndpoints) {
+              try {
+                const res = await fetch(endpoint, { method: 'GET', credentials: 'include', headers, signal: controller.signal });
+                if (res.ok) {
+                  const data = await res.json().catch(() => null);
+                  if (data?.data) {
+                    statusData = data;
+                    if (data.data.quota_per_unit) {
+                      quotaPerUnit = Number(data.data.quota_per_unit);
+                    }
+                    break;
+                  }
+                }
+              } catch {
+                // Try next endpoint
+              }
+            }
+
+            // Try user endpoints
+            for (const endpoint of userEndpoints) {
+              try {
+                const res = await fetch(endpoint, { method: 'GET', credentials: 'include', headers, signal: controller.signal });
+                if (res.ok) {
+                  const data = await res.json().catch(() => null);
+                  if (data?.data) {
+                    selfData = data;
+                    break;
+                  }
+                }
+              } catch {
+                // Try next endpoint
+              }
+            }
+
+            clearTimeout(timeout);
+
+            // Try to get quota from various fields
+            let rawQuota: number | undefined;
+            if (selfData?.data?.quota !== undefined) {
+              rawQuota = Number(selfData.data.quota);
+            } else if (statusData?.data?.quota !== undefined) {
+              rawQuota = Number(statusData.data.quota);
+            } else if (selfData?.data?.balance !== undefined) {
+              rawQuota = Number(selfData.data.balance);
+            }
+
+            if (rawQuota === undefined || !Number.isFinite(rawQuota)) {
+              return { error: 'QUOTA_FIELD_MISSING' };
+            }
+
+            return {
+              userId,
+              rawQuota,
+              quotaPerUnit,
+              usdBalance: rawQuota / quotaPerUnit,
+              usedQuota: Number(selfData.data?.used_quota || statusData.data?.used_quota || 0),
+              requestCount: Number(selfData.data?.request_count || statusData.data?.request_count || 0),
+              timestamp: Date.now(),
+            };
+          } catch (e) {
+            if (e instanceof Error && e.name === 'AbortError') {
+              return { error: 'TIMEOUT' };
+            }
+            return { error: String(e) };
           }
+        },
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('executeScript timeout')), TIMEOUT_RAW_QUOTA)),
+    ]);
 
-          const headers = {
-            'accept': 'application/json, text/plain, */*',
-            'cache-control': 'no-store',
-            'new-api-user': userId,
-          };
-
-          const [statusRes, selfRes] = await Promise.all([
-            fetch('/api/status', { method: 'GET', credentials: 'include', headers }),
-            fetch('/api/user/self', { method: 'GET', credentials: 'include', headers }),
-          ]);
-
-          if (!statusRes.ok || !selfRes.ok) {
-            return { error: 'API_REQUEST_FAILED' };
-          }
-
-          const statusData = await statusRes.json();
-          const selfData = await selfRes.json();
-
-          if (!statusData?.success || !selfData?.success) {
-            return { error: 'API_RETURNED_ERROR' };
-          }
-
-          const quotaPerUnit = Number(statusData.data?.quota_per_unit || 500000);
-          const rawQuota = Number(selfData.data?.quota);
-
-          if (!Number.isFinite(rawQuota)) {
-            return { error: 'QUOTA_FIELD_MISSING' };
-          }
-
-          return {
-            userId,
-            rawQuota,
-            quotaPerUnit,
-            usdBalance: rawQuota / quotaPerUnit,
-            usedQuota: Number(selfData.data?.used_quota || 0),
-            requestCount: Number(selfData.data?.request_count || 0),
-            timestamp: Date.now(),
-          };
-        } catch (e) {
-          return { error: String(e) };
-        }
-      },
-    });
+    clearTimeout(timeoutId);
 
     if (results && results[0]?.result) {
       const result = results[0].result;
@@ -2040,8 +2473,12 @@ export async function runBillingDiagnosis(
   apiKey: string,
   modelId: string,
   tabId: number,
-  onProgress?: (progress: DiagnosisProgress) => void
+  options: {
+    onProgress?: (progress: DiagnosisProgress) => void;
+    includeBaseline?: boolean;
+  } = {}
 ): Promise<BillingDiagnosisReport> {
+  const { onProgress, includeBaseline = false } = options;
   const startTime = new Date().toISOString();
 
   const report: BillingDiagnosisReport = {
@@ -2062,193 +2499,203 @@ export async function runBillingDiagnosis(
     status: 'ok',
   };
 
-  try {
-    // Step 1: Read initial balance
-    onProgress?.({ step: 'reading_before', ...getDiagnosisProgressMessage('reading_before') });
-    const beforeBalance = await requestRawQuotaFromTab(tabId);
-    if (!beforeBalance) {
-      report.rawQuotaTimeline = createEmptyRawQuotaTimeline('USER_NOT_LOGGED_IN');
+  // Create timeout controller for global diagnosis guard
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('DIAGNOSIS_TIMEOUT')), TIMEOUT_DIAGNOSIS_GUARD);
+  });
+
+  const runDiagnosis = async (): Promise<BillingDiagnosisReport> => {
+    try {
+      // Step 1: Read initial balance
+      onProgress?.({ step: 'reading_before', ...getDiagnosisProgressMessage('reading_before') });
+      const beforeBalance = await requestRawQuotaFromTab(tabId);
+      if (!beforeBalance) {
+        report.rawQuotaTimeline = createEmptyRawQuotaTimeline('USER_NOT_LOGGED_IN');
+        report.judgment = {
+          code: 'raw_quota_unavailable',
+          level: 'risk',
+          title: 'Balance unreadable',
+          titleZh: '无法读取原始余额',
+          detail: 'User not logged in to New API console. Cannot read raw quota.',
+          detailZh: '未登录 New API 控制台，无法读取原始余额。',
+        };
+        report.status = 'risk';
+        report.finishedAt = new Date().toISOString();
+        return report;
+      }
+
+      report.rawQuotaTimeline = {
+        before: beforeBalance,
+        readable: true,
+        settlementDelayMs: SETTLEMENT_DELAY_10S,
+        status: 'available',
+      };
+
+      // Step 2: Send test request with timeout
+      onProgress?.({ step: 'sending_request', ...getDiagnosisProgressMessage('sending_request') });
+      const invalidModel = `ai-api-doctor-invalid-${Date.now()}`;
+      let invalidResponseInfo = {
+        httpStatus: 0,
+        error: false,
+        visibleText: '',
+        completionTokens: 0,
+        hasToolCall: false,
+        hasImage: false,
+        hasAudio: false,
+        hasSearch: false,
+      };
+
+      try {
+        const controller = new AbortController();
+        const requestTimeout = setTimeout(() => controller.abort(), TIMEOUT_INVALID_REQUEST);
+
+        const invalidResponse = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: invalidModel,
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 5,
+            stream: false,
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(requestTimeout);
+        invalidResponseInfo.httpStatus = invalidResponse.status;
+        const invalidResponseText = await invalidResponse.text();
+
+        // Parse response
+        try {
+          const data = JSON.parse(invalidResponseText);
+          invalidResponseInfo.visibleText = data.choices?.[0]?.message?.content || '';
+          invalidResponseInfo.completionTokens = data.usage?.completion_tokens || 0;
+          invalidResponseInfo.hasToolCall = !!(data.choices?.[0]?.message?.tool_calls);
+          invalidResponseInfo.hasImage = !!(data.choices?.[0]?.message?.image_url);
+          invalidResponseInfo.error = !!data.error;
+        } catch {
+          invalidResponseInfo.error = true;
+        }
+      } catch (err) {
+        invalidResponseInfo.error = true;
+        if (err instanceof Error && err.name === 'AbortError') {
+          invalidResponseInfo.httpStatus = 0;
+        }
+      }
+
+      // Read immediate balance after invalid model request
+      onProgress?.({ step: 'reading_after', ...getDiagnosisProgressMessage('reading_after') });
+      report.rawQuotaTimeline.afterImmediate = await requestRawQuotaFromTab(tabId);
+
+      // Step 3: Wait 3 seconds and read balance
+      onProgress?.({ step: 'waiting_3s', ...getDiagnosisProgressMessage('waiting_3s') });
+      await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_3S));
+      report.rawQuotaTimeline.after3s = await requestRawQuotaFromTab(tabId);
+      if (report.rawQuotaTimeline.after3s && report.rawQuotaTimeline.before) {
+        report.rawQuotaTimeline.delta3s = report.rawQuotaTimeline.before.rawQuota - report.rawQuotaTimeline.after3s.rawQuota;
+      }
+
+      // Step 4: Wait 7 more seconds (total 10s)
+      onProgress?.({ step: 'waiting_10s', ...getDiagnosisProgressMessage('waiting_10s') });
+      await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_10S - SETTLEMENT_DELAY_3S));
+      report.rawQuotaTimeline.after10s = await requestRawQuotaFromTab(tabId);
+      if (report.rawQuotaTimeline.after10s && report.rawQuotaTimeline.before) {
+        report.rawQuotaTimeline.delta10s = report.rawQuotaTimeline.before.rawQuota - report.rawQuotaTimeline.after10s.rawQuota;
+      }
+
+      // Generate report
+      onProgress?.({ step: 'generating_report', ...getDiagnosisProgressMessage('generating_report') });
+
+      // Store invalid model test result
+      report.invalidModelTest = {
+        key: 'invalid_model_charge',
+        title: 'Invalid Model Test',
+        status: invalidResponseInfo.httpStatus >= 400 ? 'not_found' : 'needs_review',
+        confirmed: false,
+        highRisk: false,
+        httpStatus: invalidResponseInfo.httpStatus,
+        outputSignal: createEmptyOutputSignal(),
+        message: `HTTP ${invalidResponseInfo.httpStatus}: Invalid model test completed`,
+        suggestion: '',
+      };
+
+      // Step 5: Model connectivity test with valid model (optional)
+      if (includeBaseline) {
+        const connectivityResult = await runModelConnectivityTest(baseUrl, apiKey, modelId);
+        report.modelConnectivityTest = connectivityResult;
+      } else {
+        report.modelConnectivityTest = {
+          status: 'skipped',
+          hasError: false,
+          hasVisibleOutput: false,
+        };
+      }
+
+      // Final judgment based on invalid model test result
+      report.judgment = judgeBilling(report.rawQuotaTimeline, invalidResponseInfo);
+      report.status = report.judgment.level === 'bad' ? 'bad' : report.judgment.level === 'risk' ? 'risk' : 'ok';
+
+      // Calculate detection score
+      report.detectionScore = calculateDetectionScore(
+        report.status,
+        report.rawQuotaTimeline?.readable ?? false,
+        report.modelConnectivityTest
+      );
+
+    } catch (err) {
       report.judgment = {
-        code: 'raw_quota_unavailable',
         level: 'risk',
-        title: 'Balance unreadable',
-        titleZh: '无法读取原始余额',
-        detail: 'User not logged in to New API console. Cannot read raw quota.',
-        detailZh: '未登录 New API 控制台，无法读取原始余额。',
+        code: 'raw_quota_unavailable',
+        title: 'Detection error',
+        titleZh: '检测出错',
+        detail: err instanceof Error ? err.message : 'Unknown error',
+        detailZh: err instanceof Error ? err.message : '未知错误',
       };
       report.status = 'risk';
-      report.finishedAt = new Date().toISOString();
-      return report;
+
+      // Calculate score for error case
+      report.detectionScore = calculateDetectionScore(
+        report.status,
+        report.rawQuotaTimeline?.readable ?? false,
+        report.modelConnectivityTest
+      );
     }
 
-    report.rawQuotaTimeline = {
-      before: beforeBalance,
-      readable: true,
-      settlementDelayMs: SETTLEMENT_DELAY_10S,
-      status: 'available',
-    };
+    return report;
+  };
 
-    // Step 2: Send test request
-    onProgress?.({ step: 'sending_request', ...getDiagnosisProgressMessage('sending_request') });
-    const invalidModel = `ai-api-doctor-invalid-${Date.now()}`;
-    let invalidResponse: Response;
-    let invalidResponseText = '';
-    let invalidResponseInfo = {
-      httpStatus: 0,
-      error: false,
-      visibleText: '',
-      completionTokens: 0,
-      hasToolCall: false,
-      hasImage: false,
-      hasAudio: false,
-      hasSearch: false,
-    };
-
-    try {
-      invalidResponse = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: invalidModel,
-          messages: [{ role: 'user', content: 'hi' }],
-          max_tokens: 5,
-          stream: false,
-        }),
-      });
-
-      invalidResponseInfo.httpStatus = invalidResponse.status;
-      invalidResponseText = await invalidResponse.text();
-
-      // Parse response
-      try {
-        const data = JSON.parse(invalidResponseText);
-        invalidResponseInfo.visibleText = data.choices?.[0]?.message?.content || '';
-        invalidResponseInfo.completionTokens = data.usage?.completion_tokens || 0;
-        invalidResponseInfo.hasToolCall = !!(data.choices?.[0]?.message?.tool_calls);
-        invalidResponseInfo.hasImage = !!(data.choices?.[0]?.message?.image_url);
-        invalidResponseInfo.error = !!data.error;
-      } catch {
-        invalidResponseInfo.error = true;
-      }
-    } catch (err) {
-      invalidResponseInfo.error = true;
-    }
-
-    // Read immediate balance after invalid model request
-    onProgress?.({ step: 'reading_after', ...getDiagnosisProgressMessage('reading_after') });
-    report.rawQuotaTimeline.afterImmediate = await requestRawQuotaFromTab(tabId);
-
-    // Step 3: Wait 3 seconds and read balance
-    onProgress?.({ step: 'waiting_3s', ...getDiagnosisProgressMessage('waiting_3s') });
-    await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_3S));
-    report.rawQuotaTimeline.after3s = await requestRawQuotaFromTab(tabId);
-    if (report.rawQuotaTimeline.after3s && report.rawQuotaTimeline.before) {
-      report.rawQuotaTimeline.delta3s = report.rawQuotaTimeline.before.rawQuota - report.rawQuotaTimeline.after3s.rawQuota;
-    }
-
-    // Step 4: Wait 7 more seconds (total 10s)
-    onProgress?.({ step: 'waiting_10s', ...getDiagnosisProgressMessage('waiting_10s') });
-    await new Promise(resolve => setTimeout(resolve, SETTLEMENT_DELAY_10S - SETTLEMENT_DELAY_3S));
-    report.rawQuotaTimeline.after10s = await requestRawQuotaFromTab(tabId);
-    if (report.rawQuotaTimeline.after10s && report.rawQuotaTimeline.before) {
-      report.rawQuotaTimeline.delta10s = report.rawQuotaTimeline.before.rawQuota - report.rawQuotaTimeline.after10s.rawQuota;
-    }
-
-    // Generate report
-    onProgress?.({ step: 'generating_report', ...getDiagnosisProgressMessage('generating_report') });
-
-    // Store invalid model test result
-    report.invalidModelTest = {
-      key: 'invalid_model_charge',
-      title: 'Invalid Model Test',
-      status: invalidResponseInfo.httpStatus >= 400 ? 'not_found' : 'needs_review',
-      confirmed: false,
-      highRisk: false,
-      httpStatus: invalidResponseInfo.httpStatus,
-      outputSignal: createEmptyOutputSignal(),
-      message: `HTTP ${invalidResponseInfo.httpStatus}: Invalid model test completed`,
-      suggestion: '',
-    };
-
-    // Step 5: Baseline test with valid model
-    let baselineResponse: Response;
-    let baselineResponseInfo = {
-      httpStatus: 0,
-      error: false,
-      visibleText: '',
-      completionTokens: 0,
-      totalTokens: 0,
-      hasToolCall: false,
-      hasImage: false,
-      hasAudio: false,
-      hasSearch: false,
-    };
-
-    try {
-      baselineResponse = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: modelId,
-          messages: [{ role: 'user', content: '只回复一个字：1' }],
-          max_tokens: 5,
-          temperature: 0,
-          stream: false,
-        }),
-      });
-
-      baselineResponseInfo.httpStatus = baselineResponse.status;
-      const responseText = await baselineResponse.text();
-
-      try {
-        const data = JSON.parse(responseText);
-        baselineResponseInfo.visibleText = data.choices?.[0]?.message?.content || '';
-        baselineResponseInfo.completionTokens = data.usage?.completion_tokens || 0;
-        baselineResponseInfo.totalTokens = data.usage?.total_tokens || 0;
-        baselineResponseInfo.hasToolCall = !!(data.choices?.[0]?.message?.tool_calls);
-        baselineResponseInfo.hasImage = !!(data.choices?.[0]?.message?.image_url);
-        baselineResponseInfo.error = !!data.error;
-      } catch {
-        baselineResponseInfo.error = true;
-      }
-    } catch (err) {
-      baselineResponseInfo.error = true;
-    }
-
-    report.baselineTest = {
-      key: 'baseline_test',
-      title: 'Baseline Test',
-      status: baselineResponseInfo.httpStatus === 200 && !baselineResponseInfo.error ? 'not_found' : 'needs_review',
-      confirmed: false,
-      highRisk: false,
-      httpStatus: baselineResponseInfo.httpStatus,
-      outputSignal: createEmptyOutputSignal(),
-      message: `HTTP ${baselineResponseInfo.httpStatus}: Baseline test completed`,
-      suggestion: '',
-    };
-
-    // Final judgment based on invalid model test result
-    report.judgment = judgeBilling(report.rawQuotaTimeline, invalidResponseInfo);
-    report.status = report.judgment.level === 'bad' ? 'bad' : report.judgment.level === 'risk' ? 'risk' : 'ok';
-
+  try {
+    // Race between diagnosis and global timeout
+    const result = await Promise.race([runDiagnosis(), timeoutPromise]);
+    clearTimeout(timeoutId);
+    result.finishedAt = new Date().toISOString();
+    return result;
   } catch (err) {
+    clearTimeout(timeoutId);
+    // Timeout or other error
     report.judgment = {
       level: 'risk',
-      title: 'Detection error',
-      titleZh: '检测出错',
-      detail: err instanceof Error ? err.message : 'Unknown error',
-      detailZh: err instanceof Error ? err.message : '未知错误',
+      code: 'raw_quota_unavailable',
+      title: 'Diagnosis timeout',
+      titleZh: '检测超时',
+      detail: 'Diagnosis did not complete within 35 seconds. Site may be unresponsive or network timed out.',
+      detailZh: '检测未能在 35 秒内完成。可能是站点接口无响应、网络超时或浏览器未授权。请稍后重试。',
     };
     report.status = 'risk';
-  }
 
-  report.finishedAt = new Date().toISOString();
-  return report;
+    // Calculate score for timeout case
+    report.detectionScore = calculateDetectionScore(
+      report.status,
+      report.rawQuotaTimeline?.readable ?? false,
+      report.modelConnectivityTest
+    );
+
+    report.finishedAt = new Date().toISOString();
+    return report;
+  }
 }
 

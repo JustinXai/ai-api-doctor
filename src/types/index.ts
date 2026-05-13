@@ -1,3 +1,34 @@
+// ─── Console Verification State ─────────────────────────────
+
+export type PageFillStatus = 'idle' | 'filled';
+
+export type ConsoleVerifyStatus = 'idle' | 'checking' | 'verified' | 'not_newapi' | 'not_logged_in' | 'permission_denied' | 'status_timeout' | 'self_timeout' | 'error';
+
+export type RawQuotaStatus = 'idle' | 'available' | 'unavailable';
+
+export interface PageDomainState {
+  status: PageFillStatus;
+  origin?: string;
+  baseUrl?: string;
+  hostname?: string;
+  tabId?: number;
+  message?: string;
+}
+
+export interface ConsoleVerifyState {
+  status: ConsoleVerifyStatus;
+  origin?: string;
+  tabId?: number;
+  errorCode?: string;
+  message?: string;
+}
+
+export interface RawQuotaState {
+  status: RawQuotaStatus;
+  errorCode?: string;
+  message?: string;
+}
+
 // ─── Active Config (MVP single-config model) ──────────────
 
 export type ConfigSource = 'custom' | 'example' | 'newapi';
@@ -371,6 +402,9 @@ export interface BillingDiagnosisReport {
   baselineTest?: BillingProbeResult;
   failedRequestTest?: BillingProbeResult;
 
+  // Model connectivity test result
+  modelConnectivityTest?: ModelConnectivityResult;
+
   // Raw quota timeline
   rawQuotaTimeline?: RawQuotaTimeline;
 
@@ -379,6 +413,25 @@ export interface BillingDiagnosisReport {
 
   // Summary
   status: 'ok' | 'risk' | 'bad';
+
+  // Detection score (0-100)
+  detectionScore?: number;
+}
+
+// Model connectivity test result
+export type ModelConnectivityStatus = 'passed' | 'review' | 'failed' | 'skipped';
+
+export interface ModelConnectivityResult {
+  status: ModelConnectivityStatus;
+  httpStatus?: number;
+  latencyMs?: number;
+  visibleOutputLength?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  requestId?: string;
+  errorMessage?: string;
+  hasError: boolean;
+  hasVisibleOutput: boolean;
 }
 
 // ─── Legacy / Compatibility ────────────────────────────────

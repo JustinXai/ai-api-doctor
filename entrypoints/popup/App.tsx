@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
-import { toPng } from 'html-to-image';
 import {
   Home,
   Boxes,
@@ -20,6 +19,8 @@ import {
   Search,
   Copy,
   Globe,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   getActiveConfig,
@@ -34,6 +35,8 @@ import {
   runBillingAnomalyProbes,
   summarizeBillingAnomaly,
   runBillingDiagnosis,
+  saveBillingReport,
+  clearAllLocalData,
 } from '../../src/lib/storage';
 import { t, resolveLanguage, Language } from '../../src/lib/i18n';
 import type { ActiveConfig, DiagnosisReport, CostAuditConfig, CostAuditResult, BillingAnomalyReport, BillingProbeResult, BalanceSnapshot, BillingAnomalySummary, BillingDiagnosisReport, DiagnosisProgress } from '../../src/types';
@@ -435,30 +438,45 @@ interface BillingReportCardProps {
 
 function BillingReportCard({ report, lang }: BillingReportCardProps) {
   const { t } = useLang();
+  const timeline = report.rawQuotaTimeline;
+  const judgment = report.judgment;
 
-  // Status config based on judgment level
-  const statusConfig = {
-    ok: {
-      label: lang === 'zh-CN' ? '正常' : 'OK',
-      color: '#22C55E',
-      bgColor: 'rgba(34, 197, 94, 0.15)',
-    },
-    risk: {
-      label: lang === 'zh-CN' ? '风险' : 'RISK',
-      color: '#F59E0B',
-      bgColor: 'rgba(245, 158, 11, 0.15)',
-    },
-    bad: {
-      label: lang === 'zh-CN' ? '异常' : 'ANOMALY',
-      color: '#EF4444',
-      bgColor: 'rgba(239, 68, 68, 0.15)',
-    },
-    info: {
-      label: lang === 'zh-CN' ? '完成' : 'INFO',
-      color: '#64748B',
-      bgColor: 'rgba(100, 116, 139, 0.15)',
-    },
-  }[report.judgment.level] || statusConfig.info;
+  // Status config based on judgment code
+  const getStatusConfig = () => {
+    switch (judgment.code) {
+      case 'failed_request_not_charged':
+      case 'precharge_refunded':
+        return {
+          label: lang === 'zh-CN' ? '正常' : 'OK',
+          color: '#22C55E',
+          bgColor: 'rgba(34, 197, 94, 0.15)',
+        };
+      case 'raw_quota_unavailable':
+        return {
+          label: lang === 'zh-CN' ? '风险' : 'RISK',
+          color: '#F59E0B',
+          bgColor: 'rgba(245, 158, 11, 0.15)',
+        };
+      case 'failed_request_charged':
+      case 'empty_response_charged':
+        return {
+          label: lang === 'zh-CN' ? '异常' : 'ANOMALY',
+          color: '#EF4444',
+          bgColor: 'rgba(239, 68, 68, 0.15)',
+        };
+      default:
+        return {
+          label: lang === 'zh-CN' ? '完成' : 'DONE',
+          color: '#2563EB',
+          bgColor: 'rgba(37, 99, 235, 0.15)',
+        };
+    }
+  };
+
+  const statusConfig = getStatusConfig();
+  const delta10 = timeline?.delta10s;
+  const deltaColor = delta10 === undefined ? 'var(--muted)' : delta10 === 0 ? '#22C55E' : (judgment.code === 'failed_request_charged' || judgment.code === 'empty_response_charged') ? '#EF4444' : '#22C55E';
+  const deltaDisplay = delta10 === undefined ? '—' : `${delta10 >= 0 ? '+' : ''}${delta10}`;
 
   return (
     <div className="billing-report-card">
@@ -472,95 +490,320 @@ function BillingReportCard({ report, lang }: BillingReportCardProps) {
         </div>
       </div>
 
-      {/* Main Judgment */}
+      {/* Main Judgment - Large and clear */}
       <div className="billing-judgment">
         <div className="billing-judgment-title" style={{ color: statusConfig.color }}>
-          {lang === 'zh-CN' ? report.judgment.titleZh : report.judgment.title}
-        </div>
-        <div className="billing-judgment-detail">
-          {lang === 'zh-CN' ? report.judgment.detailZh : report.judgment.detail}
+          {lang === 'zh-CN' ? judgment.titleZh : judgment.title}
         </div>
       </div>
 
-      {/* Raw Quota Evidence Chain */}
-      {report.rawQuotaTimeline?.readable && (
+      {/* Raw Quota Evidence Chain - Simplified */}
+      {timeline?.readable && (
         <div className="billing-evidence-chain">
-          <div className="billing-evidence-title">
-            {lang === 'zh-CN' ? '原始额度证据链' : 'Raw Quota Evidence Chain'}
-          </div>
           <div className="billing-evidence-flow">
             <div className="billing-evidence-node">
               <div className="billing-evidence-label">{lang === 'zh-CN' ? '检测前' : 'Before'}</div>
-              <div className="billing-evidence-value">{report.rawQuotaTimeline.before?.rawQuota.toLocaleString() ?? 'N/A'}</div>
+              <div className="billing-evidence-value">{timeline.before?.rawQuota.toLocaleString() ?? '—'}</div>
             </div>
             <div className="billing-evidence-arrow">→</div>
             <div className="billing-evidence-node">
-              <div className="billing-evidence-label">{lang === 'zh-CN' ? '测试请求' : 'Test Request'}</div>
-              <div className="billing-evidence-value">
+              <div className="billing-evidence-label">HTTP</div>
+              <div className="billing-evidence-value" style={{ color: report.invalidModelTest?.httpStatus && report.invalidModelTest.httpStatus >= 400 ? '#EF4444' : '#22C55E' }}>
                 {report.invalidModelTest?.httpStatus || '?'}
               </div>
             </div>
             <div className="billing-evidence-arrow">→</div>
             <div className="billing-evidence-node">
               <div className="billing-evidence-label">{lang === 'zh-CN' ? '10 秒后' : 'After 10s'}</div>
-              <div className="billing-evidence-value">{report.rawQuotaTimeline.after10s?.rawQuota.toLocaleString() ?? 'N/A'}</div>
+              <div className="billing-evidence-value">{timeline.after10s?.rawQuota.toLocaleString() ?? '—'}</div>
             </div>
           </div>
-          {report.rawQuotaTimeline.delta10s !== undefined && (
-            <div className="billing-evidence-delta">
-              {lang === 'zh-CN' ? '最终变化' : 'Final Delta'}: {report.rawQuotaTimeline.delta10s >= 0 ? '+' : ''}{report.rawQuotaTimeline.delta10s}
+          {delta10 !== undefined && (
+            <div className="billing-evidence-delta" style={{ color: deltaColor }}>
+              {lang === 'zh-CN' ? '最终变化' : 'Final Delta'}: {deltaDisplay}
             </div>
           )}
         </div>
       )}
 
-      {/* Test Results */}
-      <div className="billing-test-results">
-        {report.invalidModelTest && (
-          <div className="billing-test-item">
-            <div className="billing-test-label">{lang === 'zh-CN' ? '无效模型测试' : 'Invalid Model Test'}</div>
-            <div className="billing-test-value">HTTP {report.invalidModelTest.httpStatus || '?'}</div>
-          </div>
-        )}
-        {report.baselineTest && (
-          <div className="billing-test-item">
-            <div className="billing-test-label">{lang === 'zh-CN' ? '基线测试' : 'Baseline Test'}</div>
-            <div className="billing-test-value">HTTP {report.baselineTest.httpStatus || '?'}</div>
-          </div>
-        )}
-      </div>
-
-      {/* Config Info */}
-      <div className="billing-config-info">
-        <div className="billing-config-row">
-          <span className="billing-config-label">Base URL:</span>
-          <span className="billing-config-value">{report.baseUrl}</span>
-        </div>
-        <div className="billing-config-row">
-          <span className="billing-config-label">{lang === 'zh-CN' ? '模型' : 'Model'}:</span>
-          <span className="billing-config-value">{report.activeModelId || 'N/A'}</span>
-        </div>
-        <div className="billing-config-row">
-          <span className="billing-config-label">{lang === 'zh-CN' ? '接口' : 'Interface'}:</span>
-          <span className="billing-config-value">OpenAI Chat</span>
-        </div>
-        <div className="billing-config-row">
-          <span className="billing-config-label">{lang === 'zh-CN' ? '时间' : 'Time'}:</span>
-          <span className="billing-config-value">{new Date(report.startedAt).toLocaleString()}</span>
-        </div>
-      </div>
-
       {/* Safety Note */}
       <div className="billing-safety-note">
         {lang === 'zh-CN'
           ? 'API Key 已脱敏。本报告只展示本次测试中的可复现信号，不证明服务商故意多扣费。'
-          : 'API Key is masked. This report only shows reproducible signals from this test and does not prove intentional overbilling.'}
+          : 'API Key is masked. This report only shows reproducible signals and does not prove intentional overbilling.'}
+      </div>
+    </div>
+  );
+}
+
+// ─── Billing Report Poster (Export Only) ───────────────────
+
+interface BillingReportPosterProps {
+  report: BillingDiagnosisReport;
+  lang: 'zh-CN' | 'en-US';
+}
+
+function BillingReportPoster({ report, lang }: BillingReportPosterProps) {
+  const timeline = report.rawQuotaTimeline;
+  const judgment = report.judgment;
+
+  // Hard-coded colors for export stability
+  const colors = {
+    bg: '#F8FAFC',
+    cardBg: '#FFFFFF',
+    border: '#E5E7EB',
+    text: '#0F172A',
+    muted: '#475569',
+    green: '#16A34A',
+    orange: '#F59E0B',
+    red: '#DC2626',
+    blue: '#2563EB',
+  };
+
+  // Status config based on judgment code
+  const getStatusConfig = () => {
+    switch (judgment.code) {
+      case 'failed_request_not_charged':
+      case 'precharge_refunded':
+        return {
+          label: lang === 'zh-CN' ? '正常' : 'OK',
+          labelColor: colors.green,
+          bgColor: '#DCFCE7',
+          icon: '✓',
+          title: lang === 'zh-CN' ? judgment.titleZh : judgment.title,
+          subtitle: lang === 'zh-CN' ? judgment.detailZh : judgment.detail,
+        };
+      case 'raw_quota_unavailable':
+        return {
+          label: lang === 'zh-CN' ? '风险' : 'RISK',
+          labelColor: colors.orange,
+          bgColor: '#FEF3C7',
+          icon: '⚠',
+          title: lang === 'zh-CN' ? judgment.titleZh : judgment.title,
+          subtitle: lang === 'zh-CN' ? judgment.detailZh : judgment.detail,
+        };
+      case 'failed_request_charged':
+      case 'empty_response_charged':
+        return {
+          label: lang === 'zh-CN' ? '异常' : 'ANOMALY',
+          labelColor: colors.red,
+          bgColor: '#FEE2E2',
+          icon: '✕',
+          title: lang === 'zh-CN' ? judgment.titleZh : judgment.title,
+          subtitle: lang === 'zh-CN' ? judgment.detailZh : judgment.detail,
+        };
+      default:
+        return {
+          label: lang === 'zh-CN' ? '完成' : 'DONE',
+          labelColor: colors.blue,
+          bgColor: '#DBEAFE',
+          icon: 'ℹ',
+          title: lang === 'zh-CN' ? judgment.titleZh : judgment.title,
+          subtitle: lang === 'zh-CN' ? judgment.detailZh : judgment.detail,
+        };
+    }
+  };
+
+  const statusConfig = getStatusConfig();
+  const delta10 = timeline?.delta10s;
+  const deltaColor = delta10 === undefined ? colors.muted : delta10 === 0 ? colors.green : judgment.code === 'failed_request_charged' || judgment.code === 'empty_response_charged' ? colors.red : colors.green;
+  const deltaDisplay = delta10 === undefined ? '—' : `${delta10 >= 0 ? '+' : ''}${delta10}`;
+  const usdDisplay = timeline?.before && delta10 !== undefined ? `$${(delta10 / timeline.before.quotaPerUnit).toFixed(6)}` : '—';
+
+  const origin = (() => {
+    try { return new URL(report.baseUrl).origin; } catch { return report.baseUrl; }
+  })();
+
+  return (
+    <div
+      style={{
+        width: '1080px',
+        minHeight: '1350px',
+        background: colors.bg,
+        color: colors.text,
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        padding: '64px',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '48px' }}>
+        <div>
+          <div style={{ fontSize: '28px', fontWeight: 700, color: colors.text }}>AI API Doctor</div>
+          <div style={{ fontSize: '18px', color: colors.muted }}>{lang === 'zh-CN' ? '扣费异常检测报告' : 'Billing Anomaly Report'}</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: '14px', color: colors.muted }}>{lang === 'zh-CN' ? 'API Key 已脱敏' : 'API Key Masked'}</div>
+          <div style={{ fontSize: '14px', color: colors.muted }}>{lang === 'zh-CN' ? '本地检测' : 'Local Report'}</div>
+        </div>
+      </div>
+
+      {/* Verdict Hero */}
+      <div
+        style={{
+          background: statusConfig.bgColor,
+          borderRadius: '36px',
+          padding: '48px',
+          marginBottom: '32px',
+          textAlign: 'center',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Background Circle */}
+        <div
+          style={{
+            position: 'absolute',
+            top: '-60px',
+            right: '-60px',
+            width: '200px',
+            height: '200px',
+            borderRadius: '50%',
+            background: statusConfig.labelColor,
+            opacity: 0.15,
+          }}
+        />
+        <div
+          style={{
+            width: '100px',
+            height: '100px',
+            borderRadius: '50%',
+            background: statusConfig.labelColor,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 24px',
+            fontSize: '48px',
+            color: '#FFFFFF',
+            fontWeight: 700,
+          }}
+        >
+          {statusConfig.icon}
+        </div>
+        <div
+          style={{
+            fontSize: '72px',
+            fontWeight: 800,
+            color: statusConfig.labelColor,
+            lineHeight: 1,
+            marginBottom: '16px',
+          }}
+        >
+          {statusConfig.label}
+        </div>
+        <div style={{ fontSize: '48px', fontWeight: 700, color: colors.text, marginBottom: '12px' }}>
+          {statusConfig.title}
+        </div>
+        <div style={{ fontSize: '20px', color: colors.muted, maxWidth: '700px', margin: '0 auto' }}>
+          {statusConfig.subtitle}
+        </div>
+      </div>
+
+      {/* Raw Quota Evidence Chain */}
+      <div style={{ marginBottom: '32px' }}>
+        <div style={{ fontSize: '16px', fontWeight: 600, color: colors.muted, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '20px' }}>
+          {lang === 'zh-CN' ? '原始额度证据链' : 'Raw Quota Evidence Chain'}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '24px' }}>
+          {/* Before */}
+          <div style={{ flex: 1, background: colors.cardBg, border: `2px solid ${colors.border}`, borderRadius: '24px', padding: '24px', textAlign: 'center' }}>
+            <div style={{ fontSize: '14px', color: colors.muted, marginBottom: '8px' }}>{lang === 'zh-CN' ? '检测前' : 'Before'}</div>
+            <div style={{ fontSize: '36px', fontWeight: 700, color: colors.text }}>{timeline?.before?.rawQuota.toLocaleString() ?? '—'}</div>
+          </div>
+
+          {/* Arrow 1 */}
+          <div style={{ fontSize: '32px', color: colors.muted }}>→</div>
+
+          {/* Test Request */}
+          <div style={{ flex: 1, background: colors.cardBg, border: `2px solid ${colors.border}`, borderRadius: '24px', padding: '24px', textAlign: 'center' }}>
+            <div style={{ fontSize: '14px', color: colors.muted, marginBottom: '8px' }}>{lang === 'zh-CN' ? '测试请求' : 'Test Request'}</div>
+            <div style={{ fontSize: '36px', fontWeight: 700, color: report.invalidModelTest?.httpStatus && report.invalidModelTest.httpStatus >= 400 ? colors.red : colors.green }}>
+              {report.invalidModelTest?.httpStatus ? `HTTP ${report.invalidModelTest.httpStatus}` : '—'}
+            </div>
+            <div style={{ fontSize: '14px', color: colors.muted, marginTop: '8px' }}>OpenAI Chat</div>
+          </div>
+
+          {/* Arrow 2 */}
+          <div style={{ fontSize: '32px', color: colors.muted }}>→</div>
+
+          {/* After 10s */}
+          <div style={{ flex: 1, background: colors.cardBg, border: `2px solid ${colors.border}`, borderRadius: '24px', padding: '24px', textAlign: 'center' }}>
+            <div style={{ fontSize: '14px', color: colors.muted, marginBottom: '8px' }}>{lang === 'zh-CN' ? '10 秒后' : 'After 10s'}</div>
+            <div style={{ fontSize: '36px', fontWeight: 700, color: colors.text }}>{timeline?.after10s?.rawQuota.toLocaleString() ?? '—'}</div>
+          </div>
+        </div>
+
+        {/* Delta Summary */}
+        <div style={{ background: colors.cardBg, border: `2px solid ${colors.border}`, borderRadius: '24px', padding: '32px', textAlign: 'center' }}>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: colors.muted, marginBottom: '12px' }}>{lang === 'zh-CN' ? '最终变化' : 'Final Delta'}</div>
+          <div style={{ fontSize: '64px', fontWeight: 800, color: deltaColor, marginBottom: '8px' }}>{deltaDisplay}</div>
+          <div style={{ fontSize: '24px', color: colors.muted }}>{lang === 'zh-CN' ? '约合金额' : '≈ USD'}: {usdDisplay}</div>
+        </div>
+      </div>
+
+      {/* Mini Evidence Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px', textAlign: 'center' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '8px' }}>HTTP {lang === 'zh-CN' ? '状态' : 'Status'}</div>
+          <div style={{ fontSize: '28px', fontWeight: 700, color: report.invalidModelTest?.httpStatus && report.invalidModelTest.httpStatus >= 400 ? colors.red : colors.green }}>
+            {report.invalidModelTest?.httpStatus || '—'}
+          </div>
+        </div>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px', textAlign: 'center' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '8px' }}>{lang === 'zh-CN' ? '有效输出' : 'Effective Output'}</div>
+          <div style={{ fontSize: '28px', fontWeight: 700, color: colors.text }}>
+            {report.baselineTest?.outputSignal?.hasAnyEffectiveOutput ? (lang === 'zh-CN' ? '有' : 'Yes') : (lang === 'zh-CN' ? '无' : 'No')}
+          </div>
+        </div>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px', textAlign: 'center' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '8px' }}>completion_tokens</div>
+          <div style={{ fontSize: '28px', fontWeight: 700, color: colors.text }}>
+            {report.baselineTest?.outputSignal?.completionTokens ?? '—'}
+          </div>
+        </div>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px', textAlign: 'center' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '8px' }}>total_tokens</div>
+          <div style={{ fontSize: '28px', fontWeight: 700, color: colors.text }}>
+            {report.baselineTest?.outputSignal?.totalTokens ?? '—'}
+          </div>
+        </div>
+      </div>
+
+      {/* Context Info */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '32px' }}>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '4px' }}>Base URL</div>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: colors.text, wordBreak: 'break-all' }}>{report.baseUrl}</div>
+        </div>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '4px' }}>{lang === 'zh-CN' ? '模型' : 'Model'}</div>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: colors.text }}>{report.activeModelId || '—'}</div>
+        </div>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '4px' }}>{lang === 'zh-CN' ? '接口' : 'Interface'}</div>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: colors.text }}>OpenAI Chat</div>
+        </div>
+        <div style={{ background: colors.cardBg, border: `1px solid ${colors.border}`, borderRadius: '16px', padding: '20px' }}>
+          <div style={{ fontSize: '12px', color: colors.muted, marginBottom: '4px' }}>{lang === 'zh-CN' ? '时间' : 'Time'}</div>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: colors.text }}>{new Date(report.startedAt).toLocaleString()}</div>
+        </div>
+      </div>
+
+      {/* Safety Note */}
+      <div style={{ background: '#F1F5F9', borderRadius: '12px', padding: '16px 20px', marginBottom: '24px' }}>
+        <div style={{ fontSize: '14px', color: colors.muted, lineHeight: 1.6 }}>
+          {lang === 'zh-CN'
+            ? 'API Key 已脱敏。本报告只展示本次测试中的可复现信号，不证明服务商故意多扣费。'
+            : 'API Key is masked. This report only shows reproducible signals from this test and does not prove intentional overbilling.'}
+        </div>
       </div>
 
       {/* Footer */}
-      <div className="billing-report-footer">
-        <span>{lang === 'zh-CN' ? '由 AI API Doctor 生成' : 'Generated by AI API Doctor'}</span>
-        <span className="billing-report-url">aiapidoctor.com</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '16px', borderTop: `1px solid ${colors.border}` }}>
+        <div style={{ fontSize: '14px', color: colors.muted }}>
+          {lang === 'zh-CN' ? '由 AI API Doctor 生成' : 'Generated by AI API Doctor'}
+        </div>
+        <div style={{ fontSize: '14px', color: colors.muted, fontFamily: 'monospace' }}>aiapidoctor.com</div>
       </div>
     </div>
   );
@@ -1156,31 +1399,61 @@ function HomePage() {
     source: 'custom',
     updatedAt: '',
   });
-  const [parseHint, setParseHint] = useState('');
-  const [parseError, setParseError] = useState('');
+
+  // Page domain fill state
+  const [pageDomainState, setPageDomainState] = useState<{
+    status: 'idle' | 'filled';
+    origin?: string;
+    baseUrl?: string;
+    hostname?: string;
+    tabId?: number;
+    message?: string;
+  }>({ status: 'idle' });
+
+  // Console verification state
+  const [consoleVerifyState, setConsoleVerifyState] = useState<{
+    status: 'idle' | 'checking' | 'verified' | 'not_newapi' | 'not_logged_in' | 'permission_denied' | 'status_timeout' | 'self_timeout' | 'error';
+    origin?: string;
+    tabId?: number;
+    errorCode?: string;
+    message?: string;
+  }>({ status: 'idle' });
+
+  // Raw quota state
+  const [rawQuotaState, setRawQuotaState] = useState<{
+    status: 'idle' | 'available' | 'unavailable';
+    errorCode?: string;
+    message?: string;
+  }>({ status: 'idle' });
+
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<DiagnosisProgress | null>(null);
   const [report, setReport] = useState<DiagnosisReport | null>(null);
   const [billingReport, setBillingReport] = useState<BillingDiagnosisReport | null>(null);
+  const [currentReportId, setCurrentReportId] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'md' | 'issue' | 'text' | 'provider'>('idle');
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'generating' | 'saved' | 'failed'>('idle');
+  const [saveToast, setSaveToast] = useState(false);
   const [showGuide, setShowGuide] = useState(true);
   const [showExample, setShowExample] = useState(false);
   const [showCostAudit, setShowCostAudit] = useState(false);
   const [showCostAuditAdvanced, setShowCostAuditAdvanced] = useState(false);
   const [showBillingAnomaly, setShowBillingAnomaly] = useState(false);
   const [billingAnomalyEnabled, setBillingAnomalyEnabled] = useState(false);
+  const [includeBaselineTest, setIncludeBaselineTest] = useState(false); // Baseline test off by default
   const [costAuditInput, setCostAuditInput] = useState({
     inputPricePerM: '',
     outputPricePerM: '',
     cachedInputPricePerM: '',
-    cacheWritePricePerM: '',
+    cacheWritePriceM: '',
     beforeBalance: '',
     afterBalance: '',
     currency: 'USD' as 'USD' | 'CNY' | 'points',
   });
   const reportCardRef = useRef<HTMLDivElement>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
+  // Track unsaved config changes for Models page hint
+  const configDirtyRef = useRef(false);
 
   useEffect(() => {
     getActiveConfig().then((c) => {
@@ -1202,7 +1475,7 @@ function HomePage() {
   }, []);
 
   const handleParse = useCallback((value: string) => {
-    if (!value.trim()) { setParseHint(''); setParseError(''); return; }
+    if (!value.trim()) return;
     const result = parseConnectionInput(value);
     if (result.success) {
       setConfig((prev) => ({
@@ -1211,13 +1484,10 @@ function HomePage() {
         apiKey: result.apiKey ?? prev.apiKey,
         source: result.source ?? prev.source,
       }));
-      setParseHint(result.hint ? t('urlHintMissingV1').replace('{url}', result.hint) : t('parsedOk'));
-      setParseError('');
-    } else {
-      setParseError(t('parseFailed'));
-      setParseHint('');
+      configDirtyRef.current = true;
+      localStorage.setItem('aiapidoctor-config-dirty', '1');
     }
-  }, [t]);
+  }, []);
 
   const handleSave = useCallback(async () => {
     const costAudit: CostAuditConfig = {};
@@ -1232,6 +1502,12 @@ function HomePage() {
     const next = { ...config, updatedAt: new Date().toISOString(), costAudit: Object.keys(costAudit).length > 0 ? costAudit : undefined };
     await saveActiveConfig(next);
     setConfig(next);
+    configDirtyRef.current = false;
+    localStorage.removeItem('aiapidoctor-config-dirty');
+    // Notify models page that config was saved
+    window.dispatchEvent(new CustomEvent('aiapidoctor-config-saved'));
+    setSaveToast(true);
+    setTimeout(() => setSaveToast(false), 3000);
   }, [config, costAuditInput]);
 
   const handleRun = useCallback(async () => {
@@ -1244,11 +1520,18 @@ function HomePage() {
     try {
       const next = { ...config, updatedAt: new Date().toISOString() };
       await saveActiveConfig(next);
+      configDirtyRef.current = false;
+      localStorage.removeItem('aiapidoctor-config-dirty');
+      window.dispatchEvent(new CustomEvent('aiapidoctor-config-saved'));
 
-      // Get current tab for content script communication
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) {
-        throw new Error('Cannot get current tab');
+      // Use saved consoleTabId if available, otherwise fallback to current tab
+      let tabIdToUse = pageDomainState.tabId;
+      if (!tabIdToUse) {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) {
+          throw new Error('Cannot get current tab');
+        }
+        tabIdToUse = tab.id;
       }
 
       // Run simplified billing diagnosis with progress callback
@@ -1256,11 +1539,39 @@ function HomePage() {
         next.baseUrl,
         next.apiKey,
         next.modelId || 'gpt-4o-mini',
-        tab.id,
-        (prog) => setProgress(prog)
+        tabIdToUse,
+        {
+          onProgress: (prog) => setProgress(prog),
+          includeBaseline: includeBaselineTest,
+        }
       );
 
+      // Save report to storage and get reportId
+      const reportId = await saveBillingReport(billingRep);
+
+      // Clear consoleVerifyState error after successful diagnosis
+      setConsoleVerifyState((prev) => {
+        if (prev.status === 'error' || prev.status === 'permission_denied' || prev.status === 'status_timeout' || prev.status === 'self_timeout') {
+          // If raw quota was readable, show verified; otherwise show unverified
+          if (billingRep.rawQuotaTimeline?.readable) {
+            return {
+              status: 'verified',
+              origin: prev.origin,
+              tabId: prev.tabId,
+              message: lang === 'zh-CN' ? t('consoleVerifyVerifiedWithQuota') : t('consoleVerifyVerifiedWithQuotaZh'),
+            };
+          } else {
+            return {
+              status: 'idle',
+              message: lang === 'zh-CN' ? t('consoleVerifyNoQuotaBasicDone') : t('consoleVerifyNoQuotaBasicDoneZh'),
+            };
+          }
+        }
+        return prev;
+      });
+
       setBillingReport(billingRep);
+      setCurrentReportId(reportId);
       setConfig(next);
 
       // Scroll to report after diagnosis
@@ -1277,39 +1588,158 @@ function HomePage() {
       setRunning(false);
       setProgress(null);
     }
-  }, [config]);
+  }, [config, includeBaselineTest, pageDomainState.tabId]);
 
-  // Auto-detect current site origin from active tab
+  // Auto-detect and verify New API / One API from active tab using content script
   const handleDetectSite = useCallback(async () => {
+    // Reset states first
+    setConsoleVerifyState({ status: 'idle' });
+    setRawQuotaState({ status: 'idle' });
+
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.url) {
-        setParseError(lang === 'zh-CN' ? '无法获取当前页面信息' : 'Cannot get current page info');
+      if (!tab?.id || !tab?.url) {
+        setConsoleVerifyState({
+          status: 'error',
+          message: lang === 'zh-CN' ? '未验证。说明：未验证为 New API / One API 控制台，仅影响 raw quota 精确读取。' : 'Unverified. Only affects precise raw quota reading.',
+        });
         return;
       }
-      // Check if it's an HTTP/HTTPS URL
-      if (!tab.url.startsWith('http://') && !tab.url.startsWith('https://')) {
-        setParseError(lang === 'zh-CN' ? '请先打开 New API / One API 控制台页面' : 'Please open the New API / One API console page first');
-        return;
-      }
+
+      // Try to parse URL
+      let origin: string;
+      let hostname: string;
+      let baseUrl: string;
+
       try {
         const url = new URL(tab.url);
-        const origin = url.origin;
-        // Default to {origin}/v1
-        const baseUrl = `${origin}/v1`;
+        if (!url.protocol.startsWith('http')) {
+          setConsoleVerifyState({
+            status: 'error',
+            message: lang === 'zh-CN' ? '未验证。请打开 New API / One API 控制台或 API 站点页面。' : 'Unverified. Please open New API / One API console or API site page.',
+          });
+          return;
+        }
+        origin = url.origin;
+        hostname = url.hostname;
+        baseUrl = `${origin}/v1`;
+      } catch {
+        setConsoleVerifyState({
+          status: 'error',
+          message: lang === 'zh-CN' ? '无法解析当前页面 URL，请打开网页后重试。' : 'Cannot parse current page URL. Please open a webpage and try again.',
+        });
+        return;
+      }
 
-        setConfig(prev => ({
-          ...prev,
-          baseUrl,
-          providerName: prev.providerName || url.hostname,
-        }));
-        setParseHint(lang === 'zh-CN' ? '已从当前页面识别站点' : 'Site detected from current page');
-        setParseError('');
-      } catch (e) {
-        setParseError(lang === 'zh-CN' ? 'URL 解析失败' : 'URL parsing failed');
+      // Immediately fill domain - this happens BEFORE verification
+      setConfig(prev => ({
+        ...prev,
+        baseUrl,
+        providerName: prev.providerName || hostname,
+      }));
+      configDirtyRef.current = true;
+      localStorage.setItem('aiapidoctor-config-dirty', '1');
+
+      setPageDomainState({
+        status: 'filled',
+        origin,
+        baseUrl,
+        hostname,
+        tabId: tab.id,
+        message: lang === 'zh-CN' ? '已填入当前页面域名' : 'Domain filled from current page',
+      });
+
+      // Start async verification - use consoleOrigin, NOT baseUrl
+      setConsoleVerifyState({
+        status: 'checking',
+        origin,
+        tabId: tab.id,
+        message: lang === 'zh-CN' ? '正在验证控制台...' : 'Verifying console...',
+      });
+
+      // Run verification separately to avoid catching it in URL parsing try-catch
+      try {
+        const result = await verifyNewApiSite(tab.id, origin);
+
+        if (result.isNewApi) {
+          if (result.quota !== undefined) {
+            // Full verification success
+            setConsoleVerifyState({
+              status: 'verified',
+              origin,
+              tabId: tab.id,
+              message: lang === 'zh-CN' ? '✓ 已验证控制台，可读取 raw quota' : '✓ Verified console, can read raw quota',
+            });
+            setRawQuotaState({ status: 'available' });
+          } else {
+            // New API but no quota field
+            setConsoleVerifyState({
+              status: 'verified',
+              origin,
+              tabId: tab.id,
+              errorCode: 'QUOTA_FIELD_MISSING',
+              message: lang === 'zh-CN' ? '✓ 已验证控制台，但未返回 quota 字段' : '✓ Console verified, but quota field not returned',
+            });
+            setRawQuotaState({ status: 'unavailable', errorCode: 'QUOTA_FIELD_MISSING' });
+          }
+        } else if (result.error === 'USER_NOT_FOUND') {
+          setConsoleVerifyState({
+            status: 'not_logged_in',
+            origin,
+            tabId: tab.id,
+            errorCode: 'USER_NOT_FOUND',
+            message: lang === 'zh-CN' ? '当前页面像 New API / One API，但未找到登录用户。请登录控制台后重试。' : 'Site looks like New API / One API, but no logged-in user found. Please sign in to the console and try again.',
+          });
+          setRawQuotaState({ status: 'unavailable', errorCode: 'USER_NOT_FOUND' });
+        } else if (result.error === 'PERMISSION_DENIED') {
+          setConsoleVerifyState({
+            status: 'permission_denied',
+            origin,
+            tabId: tab.id,
+            errorCode: 'PERMISSION_DENIED',
+            message: lang === 'zh-CN' ? '浏览器未授权访问当前站点，请允许插件访问该域名。' : 'Browser not authorized to access this site. Please allow the extension to access this domain.',
+          });
+        } else if (result.error === 'CONTENT_SCRIPT_TIMEOUT' || result.error === 'CONTENT_SCRIPT_FAILED') {
+          setConsoleVerifyState({
+            status: 'status_timeout',
+            origin,
+            tabId: tab.id,
+            errorCode: 'STATUS_TIMEOUT',
+            message: lang === 'zh-CN' ? '无法读取 /api/status，可能是站点无响应或浏览器未授权。' : 'Cannot read /api/status. The site may be unresponsive or browser not authorized.',
+          });
+        } else if (result.error === 'SELF_TIMEOUT') {
+          setConsoleVerifyState({
+            status: 'self_timeout',
+            origin,
+            tabId: tab.id,
+            errorCode: 'SELF_TIMEOUT',
+            message: lang === 'zh-CN' ? '无法读取 /api/user/self，可能是登录状态失效或接口无响应。' : 'Cannot read /api/user/self. Login may have expired or the API is unresponsive.',
+          });
+        } else {
+          // NOT_NEW_API or other error
+          setConsoleVerifyState({
+            status: 'not_newapi',
+            origin,
+            tabId: tab.id,
+            errorCode: result.error,
+            message: lang === 'zh-CN' ? '已填入当前页面域名，但未验证为 New API / One API 控制台。可继续手动修改 Base URL；raw quota 精确检测可能不可用。' : 'Domain filled but not verified as New API / One API. You can manually modify Base URL; raw quota detection may not be available.',
+          });
+          setRawQuotaState({ status: 'unavailable', errorCode: result.error });
+        }
+      } catch (verifyError) {
+        // Verification failed - but PageDomainState stays as 'filled'
+        setConsoleVerifyState({
+          status: 'error',
+          origin,
+          tabId: tab.id,
+          message: lang === 'zh-CN' ? '未验证。说明：未验证为 New API / One API 控制台，仅影响 raw quota 精确读取。' : 'Unverified. Only affects precise raw quota reading.',
+        });
       }
     } catch (e) {
-      setParseError(lang === 'zh-CN' ? '获取页面信息失败' : 'Failed to get page info');
+      setConsoleVerifyState({
+        status: 'error',
+        message: lang === 'zh-CN' ? '未验证。说明：未验证为 New API / One API 控制台，仅影响 raw quota 精确读取。' : 'Unverified. Only affects precise raw quota reading.',
+      });
     }
   }, [lang]);
 
@@ -1322,8 +1752,6 @@ function HomePage() {
       source: 'example',
       updatedAt: new Date().toISOString(),
     });
-    setParseHint('');
-    setParseError('');
     setReport(null);
   }, []);
 
@@ -1823,6 +2251,7 @@ function HomePage() {
       const lines: string[] = [];
       const isZh = lang === 'zh-CN';
       const timeline = billingReport.rawQuotaTimeline;
+      const conn = billingReport.modelConnectivityTest;
 
       // Header
       if (isZh) {
@@ -1832,63 +2261,59 @@ function HomePage() {
       }
       lines.push('');
 
+      // Detection Score
+      lines.push(`${isZh ? '本次检测分' : 'Detection Score'}: ${billingReport.detectionScore ?? '—'}/100`);
+      lines.push('');
+
       // Conclusion
-      if (isZh) {
-        lines.push('结论: ' + billingReport.judgment.titleZh);
-        lines.push('说明: ' + billingReport.judgment.detailZh);
-      } else {
-        lines.push('Conclusion: ' + billingReport.judgment.title);
-        lines.push('Message: ' + billingReport.judgment.detail);
-      }
+      lines.push(`${isZh ? '结论' : 'Conclusion'}: ${isZh ? billingReport.judgment.titleZh : billingReport.judgment.title}`);
+      lines.push(`${isZh ? '说明' : 'Message'}: ${isZh ? billingReport.judgment.detailZh : billingReport.judgment.detail}`);
       lines.push('');
 
       // Config
       lines.push(`Origin: ${new URL(billingReport.baseUrl).origin}`);
       lines.push(`Base URL: ${billingReport.baseUrl}`);
       lines.push(`Model: ${billingReport.activeModelId || 'N/A'}`);
-      lines.push(`Interface: OpenAI Chat`);
       lines.push(`Time: ${new Date(billingReport.startedAt).toLocaleString()}`);
       lines.push('');
 
-      // Raw Quota Timeline
-      if (timeline) {
-        if (isZh) {
-          lines.push('原始额度:');
-        } else {
-          lines.push('Raw Quota:');
-        }
+      // Raw Quota
+      if (timeline && timeline.readable) {
+        lines.push(isZh ? '原始额度:' : 'Raw Quota:');
         lines.push(`- ${isZh ? '检测前' : 'Before'}: ${timeline.before?.rawQuota?.toLocaleString() ?? 'N/A'}`);
-        lines.push(`- ${isZh ? '请求后即时' : 'After Immediate'}: ${timeline.afterImmediate?.rawQuota?.toLocaleString() ?? 'N/A'}`);
-        lines.push(`- ${isZh ? '3 秒后' : 'After 3s'}: ${timeline.after3s?.rawQuota?.toLocaleString() ?? 'N/A'}`);
         lines.push(`- ${isZh ? '10 秒后' : 'After 10s'}: ${timeline.after10s?.rawQuota?.toLocaleString() ?? 'N/A'}`);
         if (timeline.delta10s !== undefined) {
           lines.push(`- ${isZh ? '最终变化' : 'Final Delta'}: ${timeline.delta10s >= 0 ? '+' : ''}${timeline.delta10s}`);
         }
         lines.push('');
+      } else {
+        lines.push(`${isZh ? '原始额度' : 'Raw Quota'}: ${isZh ? '无法读取' : 'Unavailable'}`);
+        lines.push('');
       }
 
-      // Test Results
-      if (isZh) {
-        lines.push('测试结果:');
+      // Model Connectivity
+      lines.push(isZh ? '模型联通:' : 'Model Connectivity:');
+      if (conn) {
+        const statusMap: Record<string, string> = {
+          passed: isZh ? '通过' : 'Passed',
+          review: isZh ? '需复查' : 'Review',
+          failed: isZh ? '失败' : 'Failed',
+          skipped: isZh ? '未检测' : 'Not tested',
+        };
+        lines.push(`- ${isZh ? '状态' : 'Status'}: ${statusMap[conn.status] || conn.status}`);
+        if (conn.httpStatus) lines.push(`- HTTP: ${conn.httpStatus}`);
+        if (conn.latencyMs) lines.push(`- Latency: ${conn.latencyMs}ms`);
+        if (conn.visibleOutputLength !== undefined) lines.push(`- ${isZh ? '输出长度' : 'Output Length'}: ${conn.visibleOutputLength}`);
+        if (conn.totalTokens) lines.push(`- total_tokens: ${conn.totalTokens}`);
+        if (conn.requestId) lines.push(`- request_id: ${conn.requestId}`);
+        if (conn.errorMessage) lines.push(`- ${isZh ? '错误' : 'Error'}: ${conn.errorMessage}`);
       } else {
-        lines.push('Test Results:');
-      }
-      if (billingReport.invalidModelTest) {
-        lines.push(`- Invalid Model: HTTP ${billingReport.invalidModelTest.httpStatus || '?'}`);
-      }
-      if (billingReport.baselineTest) {
-        lines.push(`- Baseline: HTTP ${billingReport.baselineTest.httpStatus || '?'}`);
+        lines.push(`- ${isZh ? '状态' : 'Status'}: ${isZh ? '未检测' : 'Not tested'}`);
       }
       lines.push('');
 
       // Safety
-      if (isZh) {
-        lines.push('安全说明:');
-        lines.push('API Key 已脱敏。本报告只展示本次测试中的可复现信号，不证明服务商故意多扣费。');
-      } else {
-        lines.push('Safety:');
-        lines.push('API Key is masked. This report only shows reproducible signals from this test and does not prove intentional overbilling.');
-      }
+      lines.push(`${isZh ? '安全说明' : 'Safety Note'}: ${isZh ? 'API Key 已脱敏。本报告只展示本次测试中的可复现信号，不证明服务商故意多扣费。' : 'API Key is masked. This report only shows reproducible signals from this test.'}`);
       lines.push('');
       lines.push('Generated by AI API Doctor · https://aiapidoctor.com');
 
@@ -1898,52 +2323,24 @@ function HomePage() {
     } catch { setCopyState('idle'); }
   }, [billingReport, lang]);
 
+  // handleSaveImage is now only used for legacy report - billing report goes to report page
   const handleSaveImage = useCallback(async () => {
-    if (!reportCardRef.current) return;
-    setSaveState('saving');
-
-    const card = reportCardRef.current;
-
-    // Add export-mode class for larger dimensions
-    card.classList.add('export-mode');
-
-    // Wait for layout to update
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    try {
-      const dataUrl = await toPng(card, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: '#080B16',
-        filter: (node) => {
-          // Exclude the action buttons from the screenshot
-          const el = node as HTMLElement;
-          return !el.classList?.contains('report-actions');
-        },
-      });
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const filename = `ai-api-doctor-report-${timestamp}.png`;
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = filename;
-      a.click();
-      setSaveState('saved');
-      setTimeout(() => setSaveState('idle'), 2000);
-    } catch (err) {
-      console.error('Save image error:', err);
-      setSaveState('failed');
-      setTimeout(() => setSaveState('idle'), 2000);
-    } finally {
-      // Remove export-mode class
-      card.classList.remove('export-mode');
-    }
+    // This function is no longer used for billing reports
+    // Users should use the report page to save images
   }, []);
 
   const canRun = !!config.baseUrl && !!config.apiKey;
 
   return (
     <div className="page home-page">
+      {/* Save success toast */}
+      {saveToast && (
+        <div className="toast toast-success">
+          <CheckCircle2 size={14} />
+          <span>{lang === 'zh-CN' ? t('saveLocallySuccess') : t('saveLocallySuccessEn')}</span>
+        </div>
+      )}
+
       {/* Config Form */}
       <div className="config-section">
         <div className="section-title">{t('apiConfiguration')}</div>
@@ -1959,8 +2356,6 @@ function HomePage() {
             rows={3}
             onChange={(e) => handleParse(e.target.value)}
           />
-          {parseHint && <div className="parse-hint">{parseHint}</div>}
-          {parseError && <div className="parse-error">{parseError}</div>}
           <div className="form-hint">{t('pasteConnectionHint')}</div>
         </div>
 
@@ -1975,7 +2370,7 @@ function HomePage() {
             className="form-input"
             placeholder={t('providerNamePlaceholder')}
             value={config.providerName}
-            onChange={(e) => setConfig((p) => ({ ...p, providerName: e.target.value }))}
+            onChange={(e) => { setConfig((p) => ({ ...p, providerName: e.target.value })); configDirtyRef.current = true; localStorage.setItem('aiapidoctor-config-dirty', '1'); }}
           />
         </div>
 
@@ -1991,15 +2386,53 @@ function HomePage() {
               className="form-input"
               placeholder={t('baseUrlPlaceholder')}
               value={config.baseUrl}
-              onChange={(e) => setConfig((p) => ({ ...p, baseUrl: e.target.value }))}
+              onChange={(e) => {
+                setConfig((p) => ({ ...p, baseUrl: e.target.value }));
+                configDirtyRef.current = true;
+                localStorage.setItem('aiapidoctor-config-dirty', '1');
+                // Clear stale consoleVerifyState error on manual edit
+                setConsoleVerifyState((prev) =>
+                  prev.status === 'error' || prev.status === 'permission_denied' || prev.status === 'status_timeout' || prev.status === 'self_timeout'
+                    ? { ...prev, status: 'idle', errorCode: undefined, message: undefined }
+                    : prev
+                );
+              }}
             />
             <button className="btn btn-ghost btn-sm" onClick={handleDetectSite}>
               {t('detectFromSite')}
             </button>
           </div>
-          {parseHint && parseHint.includes('识别') || parseHint?.includes('detected') ? (
-            <div className="parse-hint">{parseHint}</div>
-          ) : null}
+
+          {/* Page Domain State Message */}
+          {pageDomainState.status === 'filled' && pageDomainState.message && (
+            <div className="parse-hint parse-hint-info">
+              {pageDomainState.message}
+            </div>
+          )}
+
+          {/* Console Verification State */}
+          {consoleVerifyState.status !== 'idle' && (
+            <div className={`console-verify-status ${
+              consoleVerifyState.status === 'verified' ? 'console-verify-verified' :
+              consoleVerifyState.status === 'checking' ? 'console-verify-checking' :
+              consoleVerifyState.status === 'error' ? 'console-verify-error' :
+              'console-verify-warning'
+            }`}>
+              <span className="console-verify-label">{lang === 'zh-CN' ? '控制台验证' : 'Console Verification'}: </span>
+              {consoleVerifyState.message && <span>{consoleVerifyState.message}</span>}
+            </div>
+          )}
+
+          {/* Raw Quota State */}
+          {rawQuotaState.status !== 'idle' && (
+            <div className={`raw-quota-status ${
+              rawQuotaState.status === 'available' ? 'raw-quota-available' :
+              rawQuotaState.status === 'unavailable' ? 'raw-quota-unavailable' : ''
+            }`}>
+              {rawQuotaState.status === 'available' && (lang === 'zh-CN' ? '✓ Raw quota 可读取' : '✓ Raw quota readable')}
+              {rawQuotaState.status === 'unavailable' && (lang === 'zh-CN' ? '⚠ Raw quota 不可用' : '⚠ Raw quota unavailable')}
+            </div>
+          )}
         </div>
 
         {/* API Key */}
@@ -2013,7 +2446,16 @@ function HomePage() {
             className="form-input"
             placeholder={t('apiKeyPlaceholder')}
             value={config.apiKey}
-            onChange={(e) => setConfig((p) => ({ ...p, apiKey: e.target.value }))}
+            onChange={(e) => {
+              setConfig((p) => ({ ...p, apiKey: e.target.value }));
+              configDirtyRef.current = true;
+              localStorage.setItem('aiapidoctor-config-dirty', '1');
+              setConsoleVerifyState((prev) =>
+                prev.status === 'error' || prev.status === 'permission_denied' || prev.status === 'status_timeout' || prev.status === 'self_timeout'
+                  ? { ...prev, status: 'idle', errorCode: undefined, message: undefined }
+                  : prev
+              );
+            }}
           />
         </div>
 
@@ -2028,8 +2470,20 @@ function HomePage() {
             className="form-input"
             placeholder={t('modelIdPlaceholder')}
             value={config.modelId}
-            onChange={(e) => setConfig((p) => ({ ...p, modelId: e.target.value }))}
+            onChange={(e) => {
+              setConfig((p) => ({ ...p, modelId: e.target.value }));
+              configDirtyRef.current = true;
+              localStorage.setItem('aiapidoctor-config-dirty', '1');
+              setConsoleVerifyState((prev) =>
+                prev.status === 'error' || prev.status === 'permission_denied' || prev.status === 'status_timeout' || prev.status === 'self_timeout'
+                  ? { ...prev, status: 'idle', errorCode: undefined, message: undefined }
+                  : prev
+              );
+            }}
           />
+          <div className="form-hint" style={{ marginTop: '4px', color: '#94a3b8', fontSize: '11px' }}>
+            {lang === 'zh-CN' ? t('modelsNeedSaveHint') : t('modelsNeedSaveHintEn')}
+          </div>
         </div>
 
         {/* Interface Type - Simplified */}
@@ -2041,6 +2495,28 @@ function HomePage() {
             <span className="interface-type-badge active">{t('interfaceTypeOpenAI')}</span>
             <span className="interface-type-badge disabled">{t('interfaceTypeResponses')}</span>
             <span className="interface-type-badge disabled">{t('interfaceTypeClaude')}</span>
+          </div>
+        </div>
+
+        {/* Detection Options */}
+        <div className="form-group">
+          <label className="form-label">{t('billingAnomalyDetection')}</label>
+          <div className="form-hint" style={{ marginBottom: '12px' }}>
+            {t('billingAnomalyDetectionDesc')}
+          </div>
+          <div className="baseline-option">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={includeBaselineTest}
+                onChange={(e) => setIncludeBaselineTest(e.target.checked)}
+                disabled={running}
+              />
+              <span className="checkbox-text">
+                <span className="checkbox-title">{lang === 'zh-CN' ? '模型联通检测' : 'Model connectivity test'}</span>
+                <span className="checkbox-hint">{lang === 'zh-CN' ? '会发送一次极小请求，用于确认 API Key、Base URL 和模型是否可用，可能产生极低成本。' : 'Send a tiny request to verify API Key, Base URL and model are working. May incur minimal cost.'}</span>
+              </span>
+            </label>
           </div>
         </div>
 
@@ -2264,17 +2740,129 @@ function HomePage() {
 
       {/* Billing Report Card - Simplified New API */}
       {billingReport && (() => {
+        const judgment = billingReport.judgment;
+        const connectivity = billingReport.modelConnectivityTest;
+
+        // Get billing status config
+        const getBillingStatusConfig = () => {
+          if (!billingReport.rawQuotaTimeline?.readable) {
+            return { label: lang === 'zh-CN' ? '无法读取' : 'Unavailable', color: '#F59E0B' };
+          }
+          switch (judgment.code) {
+            case 'failed_request_not_charged':
+            case 'precharge_refunded':
+              return { label: lang === 'zh-CN' ? '通过' : 'Passed', color: '#22C55E' };
+            case 'raw_quota_unavailable':
+              return { label: lang === 'zh-CN' ? '风险' : 'Risk', color: '#F59E0B' };
+            case 'failed_request_charged':
+            case 'empty_response_charged':
+              return { label: lang === 'zh-CN' ? '异常' : 'Anomaly', color: '#EF4444' };
+            default:
+              return { label: lang === 'zh-CN' ? '通过' : 'Passed', color: '#22C55E' };
+          }
+        };
+
+        // Get model connectivity status config
+        const getConnectivityStatusConfig = () => {
+          if (!connectivity || connectivity.status === 'skipped') {
+            return { label: lang === 'zh-CN' ? '未检测' : 'Not tested', color: '#94A3B8' };
+          }
+          switch (connectivity.status) {
+            case 'passed':
+              return { label: lang === 'zh-CN' ? '通过' : 'Passed', color: '#22C55E' };
+            case 'review':
+              return { label: lang === 'zh-CN' ? '需复查' : 'Review', color: '#F59E0B' };
+            case 'failed':
+              return { label: lang === 'zh-CN' ? '失败' : 'Failed', color: '#EF4444' };
+            default:
+              return { label: lang === 'zh-CN' ? '未检测' : 'Not tested', color: '#94A3B8' };
+          }
+        };
+
+        const billingStatusConfig = getBillingStatusConfig();
+        const connectivityStatusConfig = getConnectivityStatusConfig();
+        const delta10 = billingReport.rawQuotaTimeline?.delta10s;
+        const deltaColor = delta10 === undefined ? 'var(--muted)' : delta10 === 0 ? '#22C55E' : (judgment.code === 'failed_request_charged' || judgment.code === 'empty_response_charged') ? '#EF4444' : '#22C55E';
+        const deltaDisplay = delta10 === undefined ? '—' : `${delta10 >= 0 ? '+' : ''}${delta10}`;
+
+        const handleOpenReportPage = () => {
+          if (currentReportId) {
+            browser.tabs.create({ url: browser.runtime.getURL(`report.html?reportId=${currentReportId}`) });
+          }
+        };
+
         return (
           <>
-            <div ref={reportCardRef}>
-              <BillingReportCard
-                report={billingReport}
-                lang={lang}
-              />
+            <div ref={reportCardRef} className="billing-report-simple">
+              {/* Title */}
+              <div className="billing-simple-title" style={{ color: billingStatusConfig.color }}>
+                {lang === 'zh-CN' ? judgment.titleZh : judgment.title}
+              </div>
+
+              {/* Detection Score */}
+              <div className="billing-simple-score">
+                <span className="billing-simple-score-label">{lang === 'zh-CN' ? '本次检测分' : 'Detection Score'}: </span>
+                <span className="billing-simple-score-value">{billingReport.detectionScore ?? '—'}</span>
+                <span className="billing-simple-score-max">/100</span>
+              </div>
+
+              {/* Two Status Badges */}
+              <div className="billing-simple-status-row">
+                <div className="billing-simple-status-item">
+                  <span className="billing-simple-status-label">{lang === 'zh-CN' ? '扣费完整性' : 'Billing'}: </span>
+                  <span className="billing-simple-status-badge" style={{ color: billingStatusConfig.color }}>
+                    {billingStatusConfig.label}
+                  </span>
+                </div>
+                <div className="billing-simple-status-item">
+                  <span className="billing-simple-status-label">{lang === 'zh-CN' ? '模型联通' : 'Connectivity'}: </span>
+                  <span className="billing-simple-status-badge" style={{ color: connectivityStatusConfig.color }}>
+                    {connectivityStatusConfig.label}
+                  </span>
+                </div>
+              </div>
+
+              {/* Delta - only show if raw quota is available */}
+              {billingReport.rawQuotaTimeline?.readable ? (
+                <>
+                  <div className="billing-simple-delta">
+                    <span className="billing-simple-delta-label">{lang === 'zh-CN' ? '最终变化' : 'Final Delta'}: </span>
+                    <span className="billing-simple-delta-value" style={{ color: deltaColor }}>{deltaDisplay}</span>
+                  </div>
+
+                  {/* Evidence Chain */}
+                  <div className="billing-simple-evidence">
+                    <span>{billingReport.rawQuotaTimeline?.before?.rawQuota.toLocaleString() ?? '—'}</span>
+                    <span className="billing-simple-arrow">→</span>
+                    <span style={{ color: billingReport.invalidModelTest?.httpStatus && billingReport.invalidModelTest.httpStatus >= 400 ? '#EF4444' : '#22C55E' }}>
+                      {billingReport.invalidModelTest?.httpStatus ? `HTTP ${billingReport.invalidModelTest.httpStatus}` : '—'}
+                    </span>
+                    <span className="billing-simple-arrow">→</span>
+                    <span>{billingReport.rawQuotaTimeline?.after10s?.rawQuota.toLocaleString() ?? '—'}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="billing-simple-unavailable">
+                  <div className="billing-simple-unavailable-title">
+                    {lang === 'zh-CN' ? '无法读取原始余额' : 'Cannot read raw quota'}
+                  </div>
+                  <div className="billing-simple-unavailable-reason">
+                    {billingReport.rawQuotaTimeline?.error ?
+                      (lang === 'zh-CN' ? `原因：${billingReport.rawQuotaTimeline.error}` : `Reason: ${billingReport.rawQuotaTimeline.error}`)
+                      : (lang === 'zh-CN' ? '请打开并登录 New API / One API 控制台后重新验证。' : 'Please open and sign in to New API / One API console to retry.')}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Action Buttons */}
             <div className="report-actions">
+              <button
+                className="report-btn report-btn-primary"
+                onClick={handleOpenReportPage}
+              >
+                {lang === 'zh-CN' ? '打开报告页' : 'Open Report Page'}
+              </button>
               <button
                 className={`report-btn ${copyState === 'provider' ? 'copied' : ''}`}
                 onClick={handleCopyForProvider}
@@ -2282,14 +2870,10 @@ function HomePage() {
                 {copyState === 'provider' ? t('copied') : t('copyForProvider')}
               </button>
               <button
-                className={`report-btn report-btn-save ${saveState === 'saving' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
-                onClick={handleSaveImage}
-                disabled={saveState === 'saving'}
+                className={`report-btn ${copyState === 'md' ? 'copied' : ''}`}
+                onClick={handleCopyMd}
               >
-                {saveState === 'saving' ? t('savingImage') :
-                 saveState === 'saved' ? t('imageSaved') :
-                 saveState === 'failed' ? t('saveImageFailed') :
-                 t('saveImage')}
+                {copyState === 'md' ? t('copied') : t('copyMarkdown')}
               </button>
             </div>
           </>
@@ -2339,11 +2923,12 @@ function HomePage() {
                 {copyState === 'text' ? t('copied') : t('copyResultText')}
               </button>
               <button
-                className={`report-btn report-btn-save ${saveState === 'saving' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
+                className={`report-btn report-btn-save ${saveState === 'saving' || saveState === 'generating' ? 'saving' : saveState === 'saved' ? 'saved' : saveState === 'failed' ? 'failed' : ''}`}
                 onClick={handleSaveImage}
-                disabled={saveState === 'saving'}
+                disabled={saveState === 'saving' || saveState === 'generating'}
               >
                 {saveState === 'saving' ? t('savingImage') :
+                 saveState === 'generating' ? t('generatingImage') :
                  saveState === 'saved' ? t('imageSaved') :
                  saveState === 'failed' ? t('saveImageFailed') :
                  t('saveImage')}
@@ -2386,10 +2971,13 @@ function ModelsPage() {
   const [manual, setManual] = useState('');
   const [showManual, setShowManual] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [configDirty, setConfigDirty] = useState(false);
 
   useEffect(() => {
     getActiveConfig().then((c) => {
       setConfig(c);
+      const dirty = localStorage.getItem('aiapidoctor-config-dirty') === '1';
+      setConfigDirty(dirty);
       if (c?.baseUrl && c?.apiKey) {
         fetchModels(c.baseUrl, c.apiKey)
           .then(setModels)
@@ -2399,6 +2987,23 @@ function ModelsPage() {
         setLoading(false);
       }
     });
+  }, []);
+
+  // Listen for config-saved event and storage changes
+  useEffect(() => {
+    const onSaved = () => {
+      setConfigDirty(false);
+      getActiveConfig().then(setConfig);
+    };
+    window.addEventListener('aiapidoctor-config-saved', onSaved);
+    window.addEventListener('storage', (e: StorageEvent) => {
+      if (e.key === 'aiapidoctor-config-dirty') {
+        setConfigDirty(e.newValue === '1');
+      }
+    });
+    return () => {
+      window.removeEventListener('aiapidoctor-config-saved', onSaved);
+    };
   }, []);
 
   const handleSelect = useCallback(async (id: string) => {
@@ -2421,13 +3026,39 @@ function ModelsPage() {
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
+  const loadModels = useCallback(async () => {
+    if (!config?.baseUrl || !config?.apiKey) return;
+    setLoading(true);
+    setError('');
+    try {
+      const fetched = await fetchModels(config.baseUrl, config.apiKey);
+      setModels(fetched);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load models');
+    } finally {
+      setLoading(false);
+    }
+  }, [config]);
+
   if (!config?.baseUrl || !config?.apiKey) {
     return (
       <div className="page">
         <div className="empty-state">
           <div className="empty-state-icon"><Globe size={18} /></div>
-          <span className="empty-state-title">{t('modelsNoConfigTitle')}</span>
-          <span className="empty-state-hint">{t('modelsNoConfigDesc')}</span>
+          <span className="empty-state-title">{t('modelsNeedBaseUrl')}</span>
+          <span className="empty-state-hint">{t('modelsNeedBaseUrlEn')}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (configDirty) {
+    return (
+      <div className="page">
+        <div className="empty-state">
+          <div className="empty-state-icon"><Globe size={18} /></div>
+          <span className="empty-state-title">{t('modelsConfigNotSaved')}</span>
+          <span className="empty-state-hint">{t('modelsConfigNotSavedEn')}</span>
         </div>
       </div>
     );
@@ -2441,6 +3072,12 @@ function ModelsPage() {
     <div className="page">
       <div className="section-title">{t('models')}</div>
 
+      {/* Config hint banner */}
+      <div className="models-hint-banner">
+        <Globe size={12} />
+        <span>{lang === 'zh-CN' ? '当前使用首页已保存配置拉取模型。' : 'Using saved Home config to fetch models.'}</span>
+      </div>
+
       {loading && (
         <div className="page-loading"><div className="spinner" /><span>{t('loading')}</span></div>
       )}
@@ -2453,6 +3090,13 @@ function ModelsPage() {
           </div>
         </div>
       )}
+
+      {/* Refresh button */}
+      <div className="models-actions">
+        <button className="btn btn-secondary btn-sm" onClick={loadModels} disabled={loading}>
+          <span>{t('refresh')}</span>
+        </button>
+      </div>
 
       {/* Manual */}
       <div className="manual-section">
@@ -2633,9 +3277,50 @@ function ExportPage() {
 
 // ─── Help Page ──────────────────────────────────────────
 
+interface ClearDataDialogProps {
+  lang: 'zh-CN' | 'en-US';
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function ClearDataDialog({ lang, onConfirm, onCancel }: ClearDataDialogProps) {
+  return (
+    <div className="dialog-overlay" onClick={onCancel}>
+      <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-icon"><AlertTriangle size={20} color="#DC2626" /></div>
+        <div className="dialog-title">
+          {lang === 'zh-CN' ? '确认清除本地信息？' : 'Confirm Clear Local Data?'}
+        </div>
+        <div className="dialog-desc">
+          {lang === 'zh-CN'
+            ? '这会删除 AI API Doctor 保存在本浏览器中的 Base URL、API Key、模型 ID、检测报告和缓存状态。不会清除你的中转站账号、余额或浏览器 Cookie。'
+            : "This will delete AI API Doctor's Base URL, API Key, model ID, diagnostic reports and cache stored in this browser. It will not clear your relay station account, balance or browser cookies."}
+        </div>
+        <div className="dialog-actions">
+          <button className="btn btn-secondary" onClick={onCancel}>
+            {lang === 'zh-CN' ? '取消' : 'Cancel'}
+          </button>
+          <button className="btn btn-danger" onClick={onConfirm}>
+            {lang === 'zh-CN' ? '确认清除' : 'Confirm Clear'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HelpPage() {
   const { lang, t } = useLang();
   const open = (url: string) => window.open(url, '_blank', 'noopener,noreferrer');
+  const [showClearDialog, setShowClearDialog] = useState(false);
+  const [clearSuccess, setClearSuccess] = useState(false);
+
+  const handleClearData = useCallback(async () => {
+    await clearAllLocalData();
+    setShowClearDialog(false);
+    setClearSuccess(true);
+    setTimeout(() => setClearSuccess(false), 3000);
+  }, []);
 
   const links = [
     { label: t('helpFaq'), desc: t('helpFaqDesc'), url: 'https://aiapidoctor.com/faq' },
@@ -2677,6 +3362,40 @@ function HelpPage() {
         <p className="help-about">{t('aboutDescription')}</p>
         <p className="help-about">{t('aboutDescription2')}</p>
       </div>
+
+      {/* Danger Zone */}
+      <div className="help-card danger-zone">
+        <div className="help-card-title" style={{ color: '#DC2626' }}>
+          <AlertTriangle size={11} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+          {lang === 'zh-CN' ? '本地数据' : 'Local Data'}
+        </div>
+        <p className="help-dazard-desc">
+          {lang === 'zh-CN'
+            ? 'AI API Doctor 的配置、报告和历史记录只保存在当前浏览器本地。清除后不会影响你的 New API / One API 账号、余额、Cookie 或服务商后台数据。'
+            : "AI API Doctor's configuration, reports and history are only saved in the current browser's local storage. Clearing will not affect your New API / One API account, balance, cookies, or provider backend data."}
+        </p>
+        <button className="btn btn-danger-outline" onClick={() => setShowClearDialog(true)}>
+          <Trash2 size={11} />
+          {lang === 'zh-CN' ? '清除本地信息' : 'Clear Local Data'}
+        </button>
+      </div>
+
+      {/* Clear success toast */}
+      {clearSuccess && (
+        <div className="toast toast-success">
+          <CheckCircle2 size={14} />
+          <span>{lang === 'zh-CN' ? '本地信息已清除' : 'Local data cleared'}</span>
+        </div>
+      )}
+
+      {/* Clear confirm dialog */}
+      {showClearDialog && (
+        <ClearDataDialog
+          lang={lang}
+          onConfirm={handleClearData}
+          onCancel={() => setShowClearDialog(false)}
+        />
+      )}
     </div>
   );
 }

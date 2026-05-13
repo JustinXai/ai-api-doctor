@@ -4,6 +4,7 @@
 import type { RawQuotaBalance } from '../../src/types';
 
 const MESSAGE_TYPE = 'GET_NEWAPI_RAW_BALANCE';
+const VERIFY_MESSAGE_TYPE = 'VERIFY_NEWAPI_SITE';
 const INJECTED_KEY = '__ai_api_doctor_user_id__';
 
 // Listen for messages from popup/background
@@ -18,7 +19,89 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // Keep channel open for async response
   }
+
+  if (message.type === VERIFY_MESSAGE_TYPE) {
+    verifyNewApiSite()
+      .then((result) => {
+        sendResponse({ success: true, data: result });
+      })
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep channel open for async response
+  }
 });
+
+/**
+ * Verify if this is a New API / One API console page
+ * Uses page context for proper CORS and cookie handling
+ */
+async function verifyNewApiSite(): Promise<{ isNewApi: boolean; quotaPerUnit?: number }> {
+  try {
+    // Try to get userId from content script first
+    let userId = getUserIdFromContentScript();
+
+    // If not found, try to inject and get from main world
+    if (!userId) {
+      userId = await injectAndGetUserId();
+    }
+
+    if (!userId) {
+      // No user ID found - not a valid New API console
+      return { isNewApi: false, error: 'USER_NOT_FOUND' };
+    }
+
+    // User ID found, try to verify by calling the API
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'cache-control': 'no-store',
+      'new-api-user': userId,
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch('/api/status', {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      // API returned error - still consider it valid if we have userId
+      if (!response.ok) {
+        return { isNewApi: true };
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        // Invalid JSON but we have userId, consider it valid
+        return { isNewApi: true };
+      }
+
+      // Check for New API specific fields
+      const hasNewApiFields =
+        data?.data?.quota_per_unit !== undefined ||
+        data?.data?.quota !== undefined ||
+        data?.data?.username !== undefined;
+
+      return {
+        isNewApi: true,
+        quotaPerUnit: hasNewApiFields && data.data.quota_per_unit ? Number(data.data.quota_per_unit) : undefined,
+      };
+    } catch {
+      // Network error but we have userId, consider it valid
+      return { isNewApi: true };
+    }
+  } catch {
+    return { isNewApi: false, error: 'USER_NOT_FOUND' };
+  }
+}
 
 /**
  * Try to get userId from content script localStorage
@@ -118,42 +201,83 @@ export async function getRawBalance(): Promise<RawQuotaBalance> {
     'new-api-user': userId,
   };
 
-  // Fetch from both endpoints in parallel
-  const [statusRes, selfRes] = await Promise.all([
-    fetch('/api/status', {
-      method: 'GET',
-      credentials: 'include',
-      headers,
-    }),
-    fetch('/api/user/self', {
-      method: 'GET',
-      credentials: 'include',
-      headers,
-    }),
-  ]);
+  let statusData: { success?: boolean; data?: { quota_per_unit?: number } } = {};
+  let selfData: { success?: boolean; data?: { quota?: number; used_quota?: number; request_count?: number; balance?: number } } = {};
+  let quotaPerUnit = 500000;
 
-  if (!statusRes.ok || !selfRes.ok) {
-    throw new Error('API_REQUEST_FAILED');
+  // Try different API endpoints to get quota info
+  const statusEndpoints = ['/api/status', '/api/user/status', '/api/info'];
+  const userEndpoints = ['/api/user/self', '/api/user/info', '/api/user', '/api/profile'];
+
+  // Try status endpoint
+  for (const endpoint of statusEndpoints) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data?.data) {
+          statusData = data;
+          if (data.data.quota_per_unit) {
+            quotaPerUnit = Number(data.data.quota_per_unit);
+          }
+          break;
+        }
+      }
+    } catch {
+      // Try next endpoint
+    }
   }
 
-  let statusData: { success?: boolean; data?: { quota_per_unit?: number } };
-  let selfData: { success?: boolean; data?: { quota?: number; used_quota?: number; request_count?: number } };
+  // Try user info endpoint
+  for (const endpoint of userEndpoints) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
 
-  try {
-    statusData = await statusRes.json();
-    selfData = await selfRes.json();
-  } catch {
-    throw new Error('INVALID_JSON_RESPONSE');
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data?.data) {
+          selfData = data;
+          break;
+        }
+      }
+    } catch {
+      // Try next endpoint
+    }
   }
 
-  if (!statusData?.success || !selfData?.success) {
-    throw new Error('API_RETURNED_ERROR');
+  // Try to get quota from status data if user data doesn't have it
+  let rawQuota: number | undefined;
+  if (selfData?.data?.quota !== undefined) {
+    rawQuota = Number(selfData.data.quota);
+  } else if (statusData?.data?.quota !== undefined) {
+    rawQuota = Number(statusData.data.quota);
+  } else if (selfData?.data?.balance !== undefined) {
+    // Some APIs use 'balance' instead of 'quota'
+    rawQuota = Number(selfData.data.balance);
   }
 
-  const quotaPerUnit = Number(statusData.data?.quota_per_unit || 500000);
-  const rawQuota = Number(selfData.data?.quota);
-
-  if (!Number.isFinite(rawQuota)) {
+  if (rawQuota === undefined || !Number.isFinite(rawQuota)) {
     throw new Error('QUOTA_FIELD_MISSING');
   }
 
@@ -162,8 +286,8 @@ export async function getRawBalance(): Promise<RawQuotaBalance> {
     rawQuota,
     quotaPerUnit,
     usdBalance: rawQuota / quotaPerUnit,
-    usedQuota: Number(selfData.data?.used_quota || 0),
-    requestCount: Number(selfData.data?.request_count || 0),
+    usedQuota: Number(selfData.data?.used_quota || statusData.data?.used_quota || 0),
+    requestCount: Number(selfData.data?.request_count || statusData.data?.request_count || 0),
     timestamp: Date.now(),
   };
 }
